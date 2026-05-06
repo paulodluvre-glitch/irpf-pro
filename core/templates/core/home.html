@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+    <h1>Visão inicial</h1>
+    <p>Base Django preparada para migrar os setores Comercial, Preenchimento e Revisão.</p>
+</section>
+
+<section class="grid" style="margin-top: 16px;">
+    <div class="metric">
+        <span>Total de declarações</span>
+        <strong>{{ total_clients }}</strong>
+    </div>
+    <div class="metric">
+        <span>Pendentes</span>
+        <strong>{{ pending_clients }}</strong>
+    </div>
+    <div class="metric">
+        <span>Em preenchimento</span>
+        <strong>{{ in_preparation }}</strong>
+    </div>
+    <div class="metric">
+        <span>Prontas para revisão</span>
+        <strong>{{ ready_for_review }}</strong>
+    </div>
+    <div class="metric">
+        <span>Transmitidas</span>
+        <strong>{{ transmitted }}</strong>
+    </div>
+</section>
+{% endblock %}

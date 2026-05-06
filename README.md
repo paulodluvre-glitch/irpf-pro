@@ -4,10 +4,22 @@ Aplicativo interno em Streamlit para controlar o fluxo de declarações de IRPF 
 
 ## Rodar localmente
 
+### Streamlit MVP
+
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+### Django em migração
+
+```bash
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver
+```
+
+O Django usa `DATABASE_URL` quando existir. Sem essa variável, roda com SQLite local (`db.sqlite3`), que fica fora do Git.
 
 O app lê as credenciais nesta ordem:
 
@@ -26,6 +38,7 @@ No Streamlit Community Cloud, escolha Python `3.12` em `Advanced settings` antes
 - `revisao.py`: análise geral, revisão do Renato e ajustes do Heverton.
 - `database.py`: acesso ao Supabase e operações centrais de persistência.
 - `setup_supabase.py` e `bootstrap_database.py`: apoio para estruturar e popular a base.
+- `config/`, `core/`, `clients/`, `documents/`, `workflow/`, `accounts/` e `imports_app/`: base Django em migração.
 
 ## Fluxo do sistema
 
@@ -54,6 +67,15 @@ Antes de publicar, conferir:
 - Tabela `team_members` preenchida com emails e setores corretos.
 - RLS ativo no Supabase.
 - Planilhas reais fora do git.
+
+## Deploy Django no Render
+
+A branch Django inclui `render.yaml`. No Render, configurar:
+
+- `DATABASE_URL`: Postgres do Render ou URL compatível.
+- `DJANGO_SECRET_KEY`: gerada pelo Render.
+- `DJANGO_ALLOWED_HOSTS`: domínio do Render, por exemplo `irpf-pro.onrender.com`.
+- `DJANGO_CSRF_TRUSTED_ORIGINS`: origem completa, por exemplo `https://irpf-pro.onrender.com`.
 
 ## Validação rápida
 

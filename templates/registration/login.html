@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Login - IRPF{% endblock %}
+
+{% block content %}
+<section class="login-wrap">
+    <div class="panel">
+        <h1>Entrar no sistema</h1>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-row">
+                <label for="{{ form.username.id_for_label }}">Usuário</label>
+                {{ form.username }}
+            </div>
+            <div class="form-row">
+                <label for="{{ form.password.id_for_label }}">Senha</label>
+                {{ form.password }}
+            </div>
+            {% if form.errors %}
+                <p>Login ou senha inválidos.</p>
+            {% endif %}
+            <button class="button" type="submit">Entrar</button>
+        </form>
+    </div>
+</section>
+{% endblock %}
