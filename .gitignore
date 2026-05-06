@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Arquivos sensíveis e bases operacionais
+*.csv
+*.xlsx
+*.xls
+*.pdf
+*.zip
+*.db
+
+# Exportações e dados locais
+data/
+correcao/
+
+# Secrets locais do Streamlit
+.streamlit/secrets.toml
+
+# Ambientes locais
+.env
+.env.*
+.venv/
+venv/
