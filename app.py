@@ -375,6 +375,14 @@ def list_join(values: pd.Series) -> str:
     return "\n".join(dict.fromkeys(cleaned))
 
 
+def document_description_with_note(description: object, note: object) -> str:
+    description_text = normalize_text(description)
+    note_text = normalize_text(note)
+    if note_text:
+        return f"{description_text} | Obs: {note_text}"
+    return description_text
+
+
 def is_bank_document(document_type: str, institution: str) -> bool:
     text = normalize_key(f"{document_type} {institution}")
     bank_terms = [
@@ -687,11 +695,20 @@ def load_supabase_bundle(client: Client) -> dict[str, pd.DataFrame]:
             "clients",
             "id, normalized_name, full_name, group_name, meeting_status, complexity_level, tax_status, assigned_preparer, post_filing_status, updated_at",
         )
-    document_rows = fetch_all_rows(
-        client,
-        "documents",
-        "id, client_id, document_type, institution, status, last_update, control_key",
-    )
+    try:
+        document_rows = fetch_all_rows(
+            client,
+            "documents",
+            "id, client_id, document_type, institution, status, last_update, control_key, notes",
+        )
+    except Exception as exc:
+        if "notes" not in str(exc):
+            raise
+        document_rows = fetch_all_rows(
+            client,
+            "documents",
+            "id, client_id, document_type, institution, status, last_update, control_key",
+        )
     private_rows = fetch_all_rows(
         client,
         "client_private",
@@ -762,6 +779,7 @@ def load_supabase_bundle(client: Client) -> dict[str, pd.DataFrame]:
                 "Status": normalize_text(row.get("status", "")).upper() or "SEM STATUS",
                 "Última Atualização": pd.to_datetime(row.get("last_update"), errors="coerce"),
                 "chave_controle": normalize_text(row.get("control_key", "")),
+                "Observação Documento": normalize_text(row.get("notes", "")),
                 "documento_descricao": (
                     f"{normalize_text(row.get('document_type', '')) or 'Não informado'} - "
                     f"{normalize_text(row.get('institution', '')) or 'Não informada'}"
@@ -772,7 +790,13 @@ def load_supabase_bundle(client: Client) -> dict[str, pd.DataFrame]:
     documents_df = pd.DataFrame(document_source)
     if documents_df.empty:
         documents_df = pd.DataFrame(
-            columns=DOCUMENT_COLUMNS + ["documento_descricao", "chave_pessoa", "client_id", "document_id"]
+            columns=DOCUMENT_COLUMNS + ["Observação Documento", "documento_descricao", "documento_descricao_com_obs", "chave_pessoa", "client_id", "document_id"]
+        )
+    else:
+        documents_df["Observação Documento"] = documents_df["Observação Documento"].fillna("").map(normalize_text)
+        documents_df["documento_descricao_com_obs"] = documents_df.apply(
+            lambda row: document_description_with_note(row["documento_descricao"], row["Observação Documento"]),
+            axis=1,
         )
 
     private_df = pd.DataFrame(private_rows).fillna("")
@@ -826,19 +850,19 @@ def build_people_summary(clients_df: pd.DataFrame, documents_df: pd.DataFrame) -
             documentos_recebidos=("Status", lambda values: int((values == "RECEBIDO").sum())),
             documentos_pendentes=("Status", lambda values: int((values != "RECEBIDO").sum())),
             documentos_enviados_lista=(
-                "documento_descricao",
+                "documento_descricao_com_obs",
                 lambda values: list_join(
                     documents_df.loc[values.index][
                         documents_df.loc[values.index, "Status"] == "RECEBIDO"
-                    ]["documento_descricao"]
+                    ]["documento_descricao_com_obs"]
                 ),
             ),
             documentos_faltantes_lista=(
-                "documento_descricao",
+                "documento_descricao_com_obs",
                 lambda values: list_join(
                     documents_df.loc[values.index][
                         documents_df.loc[values.index, "Status"] != "RECEBIDO"
-                    ]["documento_descricao"]
+                    ]["documento_descricao_com_obs"]
                 ),
             ),
             ultima_atualizacao_docs=("Última Atualização", "max"),
@@ -1180,6 +1204,7 @@ def build_document_sections(documents_df: pd.DataFrame, checkpoints_df: pd.DataF
                     "completed": bool(stored["completed"]) if stored is not None else False,
                     "note": normalize_text(stored["note"]) if stored is not None else "",
                     "document_status": normalize_text(row["Status"]) or "SEM STATUS",
+                    "document_note": normalize_text(row.get("Observação Documento", "")),
                 }
             )
         sections.append({"section_key": section_key, "section_label": section_label, "items": items})
@@ -1418,17 +1443,24 @@ def save_document_record(
     status: str,
     last_update: date | None,
     control_key: str,
+    notes: str = "",
 ) -> None:
-    client.table("documents").insert(
-        {
-            "client_id": client_id,
-            "document_type": normalize_text(document_type) or "Não informado",
-            "institution": normalize_text(institution) or "Não informada",
-            "status": normalize_text(status).upper() or "SEM STATUS",
-            "last_update": last_update.isoformat() if last_update else None,
-            "control_key": normalize_text(control_key),
-        }
-    ).execute()
+    payload = {
+        "client_id": client_id,
+        "document_type": normalize_text(document_type) or "Não informado",
+        "institution": normalize_text(institution) or "Não informada",
+        "status": normalize_text(status).upper() or "SEM STATUS",
+        "last_update": last_update.isoformat() if last_update else None,
+        "control_key": normalize_text(control_key),
+        "notes": normalize_text(notes),
+    }
+    try:
+        client.table("documents").insert(payload).execute()
+    except Exception as exc:
+        if "notes" not in str(exc):
+            raise
+        payload.pop("notes", None)
+        client.table("documents").insert(payload).execute()
     refresh_client_documentation_status(client, client_id)
     invalidate_data_cache()
 
@@ -1442,17 +1474,24 @@ def update_document_record(
     status: str,
     last_update: date | None,
     control_key: str,
+    notes: str = "",
 ) -> None:
-    client.table("documents").update(
-        {
-            "document_type": normalize_text(document_type) or "Não informado",
-            "institution": normalize_text(institution) or "Não informada",
-            "status": normalize_text(status).upper() or "SEM STATUS",
-            "last_update": last_update.isoformat() if last_update else None,
-            "control_key": normalize_text(control_key),
-            "updated_at": datetime.utcnow().replace(microsecond=0).isoformat(),
-        }
-    ).eq("id", document_id).execute()
+    payload = {
+        "document_type": normalize_text(document_type) or "Não informado",
+        "institution": normalize_text(institution) or "Não informada",
+        "status": normalize_text(status).upper() or "SEM STATUS",
+        "last_update": last_update.isoformat() if last_update else None,
+        "control_key": normalize_text(control_key),
+        "notes": normalize_text(notes),
+        "updated_at": datetime.utcnow().replace(microsecond=0).isoformat(),
+    }
+    try:
+        client.table("documents").update(payload).eq("id", document_id).execute()
+    except Exception as exc:
+        if "notes" not in str(exc):
+            raise
+        payload.pop("notes", None)
+        client.table("documents").update(payload).eq("id", document_id).execute()
     refresh_client_documentation_status(client, client_id)
     invalidate_data_cache()
 
@@ -1460,13 +1499,20 @@ def update_document_record(
 def save_document_bulk_updates(client: Client, document_rows: list[dict], client_id: int) -> None:
     timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
     for row in document_rows:
-        client.table("documents").update(
-            {
-                "status": normalize_text(row.get("Status", "")).upper() or "SEM STATUS",
-                "last_update": row.get("last_update"),
-                "updated_at": timestamp,
-            }
-        ).eq("id", int(row["document_id"])).execute()
+        payload = {
+            "status": normalize_text(row.get("Status", "")).upper() or "SEM STATUS",
+            "last_update": row.get("last_update"),
+            "updated_at": timestamp,
+        }
+        if "Observação Documento" in row:
+            payload["notes"] = normalize_text(row.get("Observação Documento", ""))
+        try:
+            client.table("documents").update(payload).eq("id", int(row["document_id"])).execute()
+        except Exception as exc:
+            if "notes" not in str(exc):
+                raise
+            payload.pop("notes", None)
+            client.table("documents").update(payload).eq("id", int(row["document_id"])).execute()
     refresh_client_documentation_status(client, client_id)
     invalidate_data_cache()
 
@@ -2019,9 +2065,10 @@ def render_review_page(
     snapshot_df: pd.DataFrame,
     supabase_client: Client | None,
     checkpoints_df: pd.DataFrame,
+    documents_df: pd.DataFrame,
     user_profile: dict[str, object],
 ) -> None:
-    render_review_sector(build_sector_context(), people_df, snapshot_df, supabase_client, checkpoints_df, user_profile)
+    render_review_sector(build_sector_context(), people_df, snapshot_df, supabase_client, checkpoints_df, documents_df, user_profile)
 
 
 def save_stage_checkpoint_if_missing(client: Client, client_id: int, tax_status: str, acting_as: str, timestamp: str) -> None:
@@ -2302,7 +2349,7 @@ def main() -> None:
             user_profile,
         )
     elif selected_sector == "Revisão":
-        render_review_page(people_df, snapshot_df, supabase_client, checkpoints_df, user_profile)
+        render_review_page(people_df, snapshot_df, supabase_client, checkpoints_df, documents_df, user_profile)
     else:
         render_import_page(
             supabase_client,

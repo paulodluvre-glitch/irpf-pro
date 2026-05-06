@@ -67,18 +67,19 @@ def _render_document_checklist(
         st.caption("Esse cliente ainda não tem documentos cadastrados.")
         return
 
-    checklist_df = client_documents_df[["document_id", "documento_descricao", "Status", "Última Atualização"]].copy()
+    checklist_df = client_documents_df[["document_id", "documento_descricao", "Status", "Última Atualização", "Observação Documento"]].copy()
     checklist_df["Recebido"] = checklist_df["Status"].map(lambda value: normalize_text(value).upper() == "RECEBIDO")
     checklist_df["Última Atualização"] = pd.to_datetime(checklist_df["Última Atualização"], errors="coerce").dt.date
-    checklist_df = checklist_df.rename(columns={"documento_descricao": "Documento"})
+    checklist_df = checklist_df.rename(columns={"documento_descricao": "Documento", "Observação Documento": "Observação"})
     edited_docs_df = st.data_editor(
-        checklist_df[["document_id", "Documento", "Recebido", "Última Atualização"]],
+        checklist_df[["document_id", "Documento", "Recebido", "Última Atualização", "Observação"]],
         use_container_width=True,
         hide_index=True,
         disabled=["document_id", "Documento", "Última Atualização"],
         column_config={
             "Recebido": st.column_config.CheckboxColumn("Recebido?"),
             "Última Atualização": st.column_config.DateColumn("Última atualização", format="DD/MM/YYYY"),
+            "Observação": st.column_config.TextColumn("Observação do documento"),
         },
         key=f"{key_prefix}_checklist_editor_{client_id}",
     )
@@ -98,6 +99,10 @@ def _render_document_checklist(
                 int(row["document_id"]): bool(row["Recebido"])
                 for _, row in checklist_df.iterrows()
             }
+            original_status_labels = {
+                int(row["document_id"]): normalize_text(row["Status"]).upper() or "SEM STATUS"
+                for _, row in checklist_df.iterrows()
+            }
             updates = []
             for _, row in edited_docs_df.iterrows():
                 document_id = int(row["document_id"])
@@ -105,11 +110,15 @@ def _render_document_checklist(
                 last_update = original_dates.get(document_id)
                 if received_now and (pd.isna(last_update) or not original_statuses.get(document_id, False)):
                     last_update = date.today()
+                status = "RECEBIDO" if received_now else original_status_labels.get(document_id, "PENDENTE")
+                if not received_now and original_status_labels.get(document_id) == "RECEBIDO":
+                    status = "PENDENTE"
                 updates.append(
                     {
                         "document_id": document_id,
-                        "Status": "RECEBIDO" if received_now else "PENDENTE",
+                        "Status": status,
                         "last_update": _normalize_date_to_iso(last_update, pd),
+                        "Observação Documento": row.get("Observação", ""),
                     }
                 )
             save_document_bulk_updates(supabase_client, updates, client_id)
@@ -150,6 +159,8 @@ def _render_document_maintenance(
             st.markdown(
                 f"- **{normalize_text(doc_row['documento_descricao'])}** | status: `{status_label}` | atualização: `{last_update_label}`"
             )
+            if normalize_text(doc_row.get("Observação Documento", "")):
+                st.caption(f"Obs: {normalize_text(doc_row.get('Observação Documento', ''))}")
 
     if show_checklist:
         st.markdown("**Checklist rápido de recebimento**")
@@ -177,6 +188,7 @@ def _render_document_maintenance(
         with doc_col_2:
             new_last_update = st.date_input("Última atualização", value=date.today())
             new_control_key = st.text_input("Chave de controle")
+            new_notes = st.text_area("Observação do documento", height=90)
         add_document = st.form_submit_button(
             "Adicionar documento",
             use_container_width=True,
@@ -193,6 +205,7 @@ def _render_document_maintenance(
                 status=new_status,
                 last_update=new_last_update,
                 control_key=new_control_key,
+                notes=new_notes,
             )
             _notify_saved(st, "Documento adicionado com sucesso.")
             st.rerun()
@@ -229,6 +242,11 @@ def _render_document_maintenance(
                     existing_doc_date = date.today() if pd.isna(existing_doc_date) else pd.to_datetime(existing_doc_date).date()
                     edit_last_update = st.date_input("Última atualização atual", value=existing_doc_date)
                     edit_control_key = st.text_input("Chave de controle atual", value=selected_doc_row["chave_controle"])
+                    edit_notes = st.text_area(
+                        "Observação do documento",
+                        value=normalize_text(selected_doc_row.get("Observação Documento", "")),
+                        height=90,
+                    )
                 update_document = st.form_submit_button(
                     "Salvar alteração do documento",
                     use_container_width=True,
@@ -246,6 +264,7 @@ def _render_document_maintenance(
                         status=edit_status,
                         last_update=edit_last_update,
                         control_key=edit_control_key,
+                        notes=edit_notes,
                     )
                     _notify_saved(st, "Documento atualizado com sucesso.")
                     st.rerun()

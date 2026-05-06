@@ -20,6 +20,18 @@ def _checkpoint_map(checkpoints_df, client_id: int) -> dict[str, dict]:
     return {row["step_key"]: row for _, row in filtered_df.iterrows()}
 
 
+def _get_client_documents_df(documents_df, client_id: int, pd):
+    if documents_df.empty or "client_id" not in documents_df.columns:
+        return pd.DataFrame()
+    return documents_df[documents_df["client_id"] == client_id].copy()
+
+
+def _normalize_date_to_iso(value, pd) -> str | None:
+    if pd.isna(value):
+        return None
+    return pd.to_datetime(value).date().isoformat()
+
+
 def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_text, available_df) -> None:
     counts = people_df["Status Preenchimento"].value_counts()
     metric_1, metric_2, metric_3, metric_4 = st.columns(4)
@@ -321,12 +333,212 @@ def _render_review_action_form(
         st.error(f"Não foi possível salvar a revisão: {exc}")
 
 
+def _render_adjustment_management(
+    ctx: dict[str, object],
+    supabase_client,
+    selected_row,
+    people_df,
+    documents_df,
+    acting_as: str,
+    can_manage_records: bool,
+) -> None:
+    st = ctx["st"]
+    pd = ctx["pd"]
+    date = ctx["date"]
+    normalize_text = ctx["normalize_text"]
+    normalize_key = ctx["normalize_key"]
+    normalize_cpf = ctx["normalize_cpf"]
+    normalize_phone = ctx["normalize_phone"]
+    status_options = ctx["STATUS_OPTIONS"]
+    document_type_options = ctx["DOCUMENT_TYPE_OPTIONS"]
+    document_status_options = ctx["DOCUMENT_STATUS_OPTIONS"]
+    save_preparation_updates = ctx["save_preparation_updates"]
+    save_client_record = ctx["save_client_record"]
+    save_document_bulk_updates = ctx["save_document_bulk_updates"]
+    save_document_record = ctx["save_document_record"]
+
+    client_id = int(selected_row["client_id"])
+
+    with st.expander("Alterar responsável e status"):
+        responsible_names = sorted(
+            set(
+                people_df["Responsável pelo Preenchimento"].dropna().map(normalize_text).tolist()
+                + ["Não atribuído", "Paulo", "Valdivone", "Michelle", "Erlane", "Duda", "Malu", "Heverton", "Renato"]
+            )
+        )
+        current_responsible = normalize_text(selected_row["Responsável pelo Preenchimento"]) or "Não atribuído"
+        responsible_options = list(dict.fromkeys([current_responsible, *responsible_names]))
+        current_status = normalize_text(selected_row["Status Preenchimento"]) or "SEM STATUS"
+        status_select_options = list(dict.fromkeys([current_status, *status_options]))
+        with st.form(f"adjust_status_form_{client_id}"):
+            assigned_preparer = st.selectbox("Responsável pelo preenchimento", options=responsible_options, index=0)
+            tax_status = st.selectbox("Status da declaração", options=status_select_options, index=0)
+            submit_status = st.form_submit_button("Salvar responsável e status", use_container_width=True, disabled=not can_manage_records)
+        if submit_status:
+            try:
+                save_preparation_updates(
+                    supabase_client,
+                    client_id,
+                    assigned_preparer,
+                    tax_status,
+                    acting_as,
+                    [],
+                    allow_checkpoint_updates=False,
+                )
+                st.toast("Salvo!")
+                st.success("Responsável e status atualizados.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Não foi possível atualizar responsável/status: {exc}")
+
+    with st.expander("Editar cadastro do cliente"):
+        with st.form(f"adjust_client_form_{client_id}"):
+            col_1, col_2 = st.columns(2)
+            with col_1:
+                full_name = st.text_input("Nome completo", value=selected_row["NOME"])
+                group_name = st.text_input("Grupo", value=selected_row["Grupo"])
+                complexity = st.text_input("Nível de complexidade", value=selected_row["Nivel de Complexidade"])
+                meeting_status = st.text_input("Reunião", value=selected_row["Reunião"])
+            with col_2:
+                cpf = st.text_input("CPF", value=selected_row.get("CPF", ""))
+                phone = st.text_input("Telefone", value=selected_row.get("Telefone", ""))
+                gov_password = st.text_input("Senha Gov", value=selected_row.get("Senha Gov", ""))
+                has_digital_certificate = st.checkbox(
+                    "Tem certificado digital",
+                    value=bool(selected_row.get("Tem Certificado Digital", False)),
+                )
+                power_of_attorney = st.text_input(
+                    "Cadastro de procuração",
+                    value=selected_row.get("Cadastro de Procuração", ""),
+                )
+            submit_client = st.form_submit_button("Salvar cadastro", use_container_width=True, disabled=not can_manage_records)
+        if submit_client:
+            try:
+                save_client_record(
+                    supabase_client,
+                    {
+                        "normalized_name": normalize_key(full_name),
+                        "full_name": normalize_text(full_name),
+                        "group_name": normalize_text(group_name),
+                        "meeting_status": normalize_text(meeting_status),
+                        "complexity_level": normalize_text(complexity),
+                        "tax_status": normalize_text(selected_row["Status Preenchimento"]),
+                        "assigned_preparer": normalize_text(selected_row["Responsável pelo Preenchimento"]),
+                        "post_filing_status": normalize_text(selected_row["Status Pós-Envio"]),
+                        "documentation_status": normalize_text(selected_row["Documentação"]),
+                        "active": True,
+                    },
+                    {
+                        "cpf": normalize_cpf(cpf),
+                        "phone": normalize_phone(phone),
+                        "gov_password": gov_password,
+                        "has_digital_certificate": has_digital_certificate,
+                        "power_of_attorney": power_of_attorney,
+                    },
+                    client_id=client_id,
+                )
+                st.toast("Salvo!")
+                st.success("Cadastro atualizado.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Não foi possível atualizar cadastro: {exc}")
+
+    with st.expander("Documentos faltantes e observações"):
+        client_documents_df = _get_client_documents_df(documents_df, client_id, pd)
+        if client_documents_df.empty:
+            st.caption("Esse cliente ainda não tem documentos cadastrados.")
+        else:
+            editor_df = client_documents_df[["document_id", "documento_descricao", "Status", "Última Atualização", "Observação Documento"]].copy()
+            editor_df = editor_df.rename(columns={"documento_descricao": "Documento", "Observação Documento": "Observação"})
+            editor_df["Última Atualização"] = pd.to_datetime(editor_df["Última Atualização"], errors="coerce").dt.date
+            status_choices = list(dict.fromkeys(client_documents_df["Status"].dropna().map(normalize_text).tolist() + document_status_options))
+            edited_docs_df = st.data_editor(
+                editor_df,
+                use_container_width=True,
+                hide_index=True,
+                disabled=["document_id", "Documento", "Última Atualização"],
+                column_config={
+                    "Status": st.column_config.SelectboxColumn("Status", options=status_choices),
+                    "Última Atualização": st.column_config.DateColumn("Última atualização", format="DD/MM/YYYY"),
+                    "Observação": st.column_config.TextColumn("Observação do documento"),
+                },
+                key=f"adjust_docs_editor_{client_id}",
+            )
+            if st.button(
+                "Salvar documentos e observações",
+                use_container_width=True,
+                disabled=not can_manage_records,
+                key=f"adjust_save_docs_{client_id}",
+            ):
+                try:
+                    original_dates = {int(row["document_id"]): row["Última Atualização"] for _, row in editor_df.iterrows()}
+                    updates = []
+                    for _, row in edited_docs_df.iterrows():
+                        document_id = int(row["document_id"])
+                        status = normalize_text(row.get("Status", "")).upper() or "SEM STATUS"
+                        last_update = original_dates.get(document_id)
+                        if status == "RECEBIDO" and pd.isna(last_update):
+                            last_update = date.today()
+                        updates.append(
+                            {
+                                "document_id": document_id,
+                                "Status": status,
+                                "last_update": _normalize_date_to_iso(last_update, pd),
+                                "Observação Documento": row.get("Observação", ""),
+                            }
+                        )
+                    save_document_bulk_updates(supabase_client, updates, client_id)
+                    st.toast("Salvo!")
+                    st.success("Documentos atualizados para o Comercial cobrar o que faltar.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Não foi possível atualizar documentos: {exc}")
+
+        st.markdown("**Adicionar documento faltante**")
+        with st.form(f"adjust_add_doc_{client_id}"):
+            col_1, col_2 = st.columns(2)
+            with col_1:
+                document_type = st.selectbox("Tipo de documento", options=document_type_options, key=f"adjust_new_doc_type_{client_id}")
+                institution = st.text_input("Instituição", key=f"adjust_new_doc_institution_{client_id}")
+                status = st.selectbox(
+                    "Status do documento",
+                    options=document_status_options,
+                    index=document_status_options.index("SOLICITAR DOCUMENTO")
+                    if "SOLICITAR DOCUMENTO" in document_status_options
+                    else 0,
+                    key=f"adjust_new_doc_status_{client_id}",
+                )
+            with col_2:
+                last_update = st.date_input("Última atualização", value=date.today(), key=f"adjust_new_doc_date_{client_id}")
+                control_key = st.text_input("Chave de controle", key=f"adjust_new_doc_control_{client_id}")
+                notes = st.text_area("Observação do documento", height=90, key=f"adjust_new_doc_note_{client_id}")
+            add_doc = st.form_submit_button("Adicionar documento", use_container_width=True, disabled=not can_manage_records)
+        if add_doc:
+            try:
+                save_document_record(
+                    supabase_client,
+                    client_id=client_id,
+                    document_type=document_type,
+                    institution=institution,
+                    status=status,
+                    last_update=last_update,
+                    control_key=control_key,
+                    notes=notes,
+                )
+                st.toast("Salvo!")
+                st.success("Documento faltante adicionado e disponível para cobrança no Comercial.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Não foi possível adicionar documento: {exc}")
+
+
 def render_review_page(
     ctx: dict[str, Any],
     people_df,
     snapshot_df,
     supabase_client,
     checkpoints_df,
+    documents_df,
     user_profile: dict[str, object],
 ) -> None:
     st = ctx["st"]
@@ -341,6 +553,7 @@ def render_review_page(
 
     st.header("Revisão")
     acting_as = normalize_text(user_profile.get("display_name", "")) or "Equipe"
+    can_manage_records = bool(user_profile.get("can_manage_records", False))
 
     analysis_tab, review_tab, adjustments_tab = st.tabs(["Análise Geral", "Revisão", "Ajustes"])
 
@@ -434,6 +647,15 @@ def render_review_page(
             )
             selected_row = adjust_queue_df[adjust_queue_df["NOME"] == selected_name].iloc[0]
             _render_client_summary(st, selected_row)
+            _render_adjustment_management(
+                ctx,
+                supabase_client,
+                selected_row,
+                people_df,
+                documents_df,
+                acting_as,
+                can_manage_records,
+            )
             _render_review_action_form(
                 ctx,
                 supabase_client,

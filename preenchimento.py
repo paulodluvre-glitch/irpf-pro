@@ -170,6 +170,43 @@ def _render_client_header(st, selected_row) -> None:
         st.metric("Progresso", selected_row.get("Progresso Geral", "0%"))
 
 
+def _render_assume_responsibility_button(
+    ctx: dict[str, Any],
+    supabase_client,
+    selected_row,
+    acting_as: str,
+    can_edit_preparation: bool,
+) -> None:
+    st = ctx["st"]
+    save_preparation_updates = ctx["save_preparation_updates"]
+    client_id = int(selected_row["client_id"])
+
+    if st.button(
+        "Assumir responsabilidade e iniciar preenchimento",
+        use_container_width=True,
+        disabled=not can_edit_preparation,
+        key=f"prep_assume_available_{client_id}",
+    ):
+        if supabase_client is None:
+            st.warning("Para assumir a declaração, use o login do Supabase.")
+            return
+        try:
+            save_preparation_updates(
+                supabase_client,
+                client_id,
+                acting_as,
+                "EM PREENCHIMENTO",
+                acting_as,
+                [],
+                allow_checkpoint_updates=False,
+            )
+            st.toast("Salvo!")
+            st.success("Declaração atribuída para você. Ela agora aparece em Minhas declarações.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Não foi possível assumir a declaração: {exc}")
+
+
 def _render_support_panels(st, selected_row) -> None:
     info_col_1, info_col_2 = st.columns(2)
     with info_col_1:
@@ -293,8 +330,8 @@ def _render_general_client_admin(
     if client_documents_df.empty:
         st.caption("Esse cliente ainda não tem documentos cadastrados.")
     else:
-        editor_df = client_documents_df[["document_id", "documento_descricao", "Status", "Última Atualização"]].copy()
-        editor_df = editor_df.rename(columns={"documento_descricao": "Documento"})
+        editor_df = client_documents_df[["document_id", "documento_descricao", "Status", "Última Atualização", "Observação Documento"]].copy()
+        editor_df = editor_df.rename(columns={"documento_descricao": "Documento", "Observação Documento": "Observação"})
         editor_df["Última Atualização"] = pd.to_datetime(editor_df["Última Atualização"], errors="coerce").dt.date
         editor_status_options = list(dict.fromkeys(client_documents_df["Status"].dropna().map(normalize_text).tolist() + document_status_options))
         edited_docs_df = st.data_editor(
@@ -305,6 +342,7 @@ def _render_general_client_admin(
             column_config={
                 "Status": st.column_config.SelectboxColumn("Status", options=editor_status_options),
                 "Última Atualização": st.column_config.DateColumn("Última atualização", format="DD/MM/YYYY"),
+                "Observação": st.column_config.TextColumn("Observação do documento"),
             },
             key=f"prep_general_docs_editor_{client_id}",
         )
@@ -331,6 +369,7 @@ def _render_general_client_admin(
                             "document_id": document_id,
                             "Status": status,
                             "last_update": _normalize_date_to_iso(last_update, pd),
+                            "Observação Documento": row.get("Observação", ""),
                         }
                     )
                 save_document_bulk_updates(supabase_client, updates, client_id)
@@ -350,6 +389,7 @@ def _render_general_client_admin(
             with add_col_2:
                 new_last_update = st.date_input("Última atualização", value=date.today(), key=f"prep_general_new_last_update_{client_id}")
                 new_control_key = st.text_input("Chave de controle", key=f"prep_general_new_control_{client_id}")
+                new_notes = st.text_area("Observação do documento", height=90, key=f"prep_general_new_notes_{client_id}")
             add_document = st.form_submit_button("Adicionar documento", use_container_width=True, disabled=not can_manage_documents)
 
         if add_document:
@@ -362,6 +402,7 @@ def _render_general_client_admin(
                     status=new_status,
                     last_update=new_last_update,
                     control_key=new_control_key,
+                    notes=new_notes,
                 )
                 st.toast("Salvo!")
                 st.success("Documento adicionado.")
@@ -389,6 +430,11 @@ def _render_general_client_admin(
                     existing_doc_date = date.today() if pd.isna(existing_doc_date) else pd.to_datetime(existing_doc_date).date()
                     edit_last_update = st.date_input("Última atualização atual", value=existing_doc_date)
                     edit_control_key = st.text_input("Chave de controle atual", value=selected_doc_row["chave_controle"])
+                    edit_notes = st.text_area(
+                        "Observação do documento",
+                        value=normalize_text(selected_doc_row.get("Observação Documento", "")),
+                        height=90,
+                    )
                 update_document = st.form_submit_button("Salvar alteração do documento", use_container_width=True, disabled=not can_manage_documents)
 
             if update_document:
@@ -402,6 +448,7 @@ def _render_general_client_admin(
                         status=edit_status,
                         last_update=edit_last_update,
                         control_key=edit_control_key,
+                        notes=edit_notes,
                     )
                     st.toast("Salvo!")
                     st.success("Documento atualizado.")
@@ -517,7 +564,10 @@ def _render_preparation_form(
                         launched = st.checkbox(
                             item["step_label"],
                             value=item["completed"],
-                            help=f"Status do documento no checklist da Wanessa: {item['document_status']}",
+                            help=(
+                                f"Status do documento no checklist da Wanessa: {item['document_status']}"
+                                + (f"\nObservação: {item['document_note']}" if item.get("document_note") else "")
+                            ),
                             key=f"{prefix}_{client_id}_{item['step_key']}_completed",
                             disabled=not can_edit_full_preparation,
                         )
@@ -664,16 +714,12 @@ def render_preparation_editor(
 
             _render_client_header(st, selected_row)
             _render_support_panels(st, selected_row)
-            _render_preparation_form(
+            _render_assume_responsibility_button(
                 ctx,
                 supabase_client,
                 selected_row,
-                checkpoints_df,
-                documents_df,
                 acting_as,
                 can_edit_preparation,
-                can_edit_full_preparation,
-                prefix="prep_available",
             )
 
     with my_tab:

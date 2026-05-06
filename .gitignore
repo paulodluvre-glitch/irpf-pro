@@ -9,10 +9,12 @@ __pycache__/
 *.pdf
 *.zip
 *.db
+db.sqlite3
 
 # Exportações e dados locais
 data/
 correcao/
+staticfiles/
 
 # Secrets locais do Streamlit
 .streamlit/secrets.toml
