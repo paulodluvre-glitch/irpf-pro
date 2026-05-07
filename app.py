@@ -2100,9 +2100,32 @@ def save_stage_checkpoint_if_missing(client: Client, client_id: int, tax_status:
 
 def prepare_export_sheet(df: pd.DataFrame) -> pd.DataFrame:
     export_df = df.copy()
+
+    def format_export_value(value: object) -> object:
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, pd.Timestamp):
+            if value.tzinfo is not None:
+                value = value.tz_convert(None)
+            return value.strftime("%d/%m/%Y %H:%M")
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                value = value.replace(tzinfo=None)
+            return value.strftime("%d/%m/%Y %H:%M")
+        if isinstance(value, date):
+            return value.strftime("%d/%m/%Y")
+        return value
+
     for column in export_df.columns:
         if pd.api.types.is_datetime64_any_dtype(export_df[column]):
-            export_df[column] = export_df[column].dt.strftime("%d/%m/%Y %H:%M").fillna("")
+            export_df[column] = export_df[column].map(format_export_value)
+        elif export_df[column].dtype == "object":
+            export_df[column] = export_df[column].map(format_export_value)
     return export_df
 
 
