@@ -37,8 +37,9 @@ def _normalize_date_to_iso(value, pd) -> str | None:
     return pd.to_datetime(value).date().isoformat()
 
 
-def _assigned_options(team_df, normalize_text) -> list[str]:
-    names = set(team_df["name"].dropna().map(normalize_text).tolist()) if "name" in team_df.columns else set()
+def _assigned_options(team_df, normalize_text, canonical_preparer=None) -> list[str]:
+    canonical_preparer = canonical_preparer or normalize_text
+    names = set(team_df["name"].dropna().map(canonical_preparer).tolist()) if "name" in team_df.columns else set()
     names.update(["Wanessa", "Paulo", "Valdivone", "Michelle", "Erlane", "Duda", "Malu", "Heverton", "Renato"])
     return ["Não atribuído"] + sorted(name for name in names if name)
 
@@ -85,6 +86,168 @@ def _render_my_table(st, my_df) -> None:
     ].copy()
     st.dataframe(
         display_df.sort_values(["Status Preenchimento", "Grupo", "NOME"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def _progress_number(value: object, pd) -> float:
+    if value is None:
+        return 0.0
+    try:
+        if pd.isna(value):
+            return 0.0
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(str(value).replace("%", "").replace(",", ".").strip() or 0)
+    except ValueError:
+        return 0.0
+
+
+def _count_by(df, column: str, normalize_text) -> Any:
+    if df.empty or column not in df.columns:
+        return df.iloc[0:0].copy()
+    return (
+        df[column]
+        .map(lambda value: normalize_text(value) or "Não informado")
+        .value_counts()
+        .rename_axis(column)
+        .reset_index(name="Quantidade")
+    )
+
+
+def _render_count_card(st, title: str, count_df) -> None:
+    with st.container(border=True):
+        st.markdown(f"**{title}**")
+        if count_df.empty:
+            st.caption("Sem dados para exibir.")
+            return
+        st.dataframe(count_df, use_container_width=True, hide_index=True, height=230)
+
+
+def _render_general_dashboard(st, pd, people_df, normalize_text) -> None:
+    if people_df.empty:
+        st.info("Nenhum cliente cadastrado para consolidar.")
+        return
+
+    dashboard_df = people_df.copy()
+    dashboard_df["_status_label"] = dashboard_df["Status Preenchimento"].map(
+        lambda value: normalize_text(value) or "SEM STATUS"
+    )
+    dashboard_df["_group_label"] = dashboard_df["Grupo"].map(lambda value: normalize_text(value) or "Sem grupo")
+    dashboard_df["_complexity_label"] = dashboard_df["Nivel de Complexidade"].map(
+        lambda value: normalize_text(value) or "Não informado"
+    )
+    dashboard_df["_responsible_label"] = dashboard_df["Responsável pelo Preenchimento"].map(
+        lambda value: normalize_text(value) or "Não atribuído"
+    )
+    dashboard_df["_documentation_label"] = dashboard_df["Documentação"].map(
+        lambda value: normalize_text(value) or "Sem documentação"
+    )
+    dashboard_df["_progress_num"] = dashboard_df["Progresso Geral"].map(lambda value: _progress_number(value, pd))
+    docs_percent_source = (
+        dashboard_df["% documentação recebida"]
+        if "% documentação recebida" in dashboard_df.columns
+        else pd.Series([0] * len(dashboard_df), index=dashboard_df.index)
+    )
+    dashboard_df["_docs_percent"] = pd.to_numeric(docs_percent_source, errors="coerce").fillna(0)
+
+    unassigned_mask = dashboard_df["Responsável pelo Preenchimento"].map(lambda value: _is_unassigned(value, normalize_text))
+    metric_1, metric_2, metric_3, metric_4, metric_5 = st.columns(5)
+    with metric_1:
+        st.metric("Declarações", len(dashboard_df))
+    with metric_2:
+        st.metric("Em preenchimento", int((dashboard_df["_status_label"] == "EM PREENCHIMENTO").sum()))
+    with metric_3:
+        st.metric("Prontas para revisão", int((dashboard_df["_status_label"] == "PRONTO PARA REVISÃO").sum()))
+    with metric_4:
+        st.metric("Sem responsável", int(unassigned_mask.sum()))
+    with metric_5:
+        st.metric("Docs acima de 75%", int((dashboard_df["_docs_percent"] > 75).sum()))
+
+    st.markdown("**Distribuição da carteira**")
+    dist_col_1, dist_col_2 = st.columns(2)
+    with dist_col_1:
+        _render_count_card(st, "Por complexidade", _count_by(dashboard_df, "_complexity_label", normalize_text).rename(columns={"_complexity_label": "Complexidade"}))
+    with dist_col_2:
+        _render_count_card(st, "Por status da declaração", _count_by(dashboard_df, "_status_label", normalize_text).rename(columns={"_status_label": "Status"}))
+    dist_col_3, dist_col_4 = st.columns(2)
+    with dist_col_3:
+        _render_count_card(st, "Por documentação", _count_by(dashboard_df, "_documentation_label", normalize_text).rename(columns={"_documentation_label": "Documentação"}))
+    with dist_col_4:
+        _render_count_card(st, "Por responsável", _count_by(dashboard_df, "_responsible_label", normalize_text).rename(columns={"_responsible_label": "Responsável"}))
+
+    st.markdown("**Declarações em preenchimento agora**")
+    in_preparation_df = dashboard_df[dashboard_df["_status_label"] == "EM PREENCHIMENTO"].copy()
+    if in_preparation_df.empty:
+        st.caption("Nenhuma declaração está marcada como EM PREENCHIMENTO.")
+    else:
+        in_preparation_columns = [
+            "NOME",
+            "Grupo",
+            "Responsável pelo Preenchimento",
+            "Nivel de Complexidade",
+            "Documentação",
+            "Recebidos / Total",
+            "Progresso Geral",
+            "last_activity_at",
+        ]
+        in_preparation_columns = [column for column in in_preparation_columns if column in in_preparation_df.columns]
+        st.dataframe(
+            in_preparation_df[in_preparation_columns].sort_values(["Responsável pelo Preenchimento", "Grupo", "NOME"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.markdown("**Status por grupo e prioridade operacional**")
+    status_pivot = pd.crosstab(dashboard_df["_group_label"], dashboard_df["_status_label"])
+    group_summary = (
+        dashboard_df.groupby("_group_label")
+        .agg(
+            Total=("NOME", "size"),
+            Progresso_Medio=("_progress_num", "mean"),
+            Complexidade_Predominante=(
+                "_complexity_label",
+                lambda values: values.mode().iat[0] if not values.mode().empty else "Não informado",
+            ),
+        )
+        .join(status_pivot, how="left")
+        .reset_index()
+        .rename(
+            columns={
+                "_group_label": "Grupo",
+                "Progresso_Medio": "Progresso médio",
+                "Complexidade_Predominante": "Complexidade predominante",
+            }
+        )
+    )
+    group_summary["_sort_progress"] = group_summary["Progresso médio"]
+    group_summary["Progresso médio"] = group_summary["Progresso médio"].map(lambda value: f"{value:.1f}%")
+    group_summary = group_summary.sort_values(["_sort_progress", "Total"], ascending=[True, False]).drop(
+        columns=["_sort_progress"]
+    )
+    st.dataframe(group_summary, use_container_width=True, hide_index=True)
+
+    group_options = group_summary["Grupo"].tolist()
+    selected_group = st.selectbox(
+        "Detalhar clientes do grupo",
+        options=group_options,
+        key="prep_general_dashboard_group_detail",
+    )
+    group_detail_df = dashboard_df[dashboard_df["_group_label"] == selected_group].copy()
+    detail_columns = [
+        "NOME",
+        "Status Preenchimento",
+        "Responsável pelo Preenchimento",
+        "Nivel de Complexidade",
+        "Documentação",
+        "Recebidos / Total",
+        "Progresso Geral",
+    ]
+    detail_columns = [column for column in detail_columns if column in group_detail_df.columns]
+    st.dataframe(
+        group_detail_df[detail_columns].sort_values(["Status Preenchimento", "NOME"]),
         use_container_width=True,
         hide_index=True,
     )
@@ -253,6 +416,7 @@ def _render_general_client_admin(
     status_options_base = ctx["STATUS_OPTIONS"]
     document_type_options = ctx["DOCUMENT_TYPE_OPTIONS"]
     document_status_options = ctx["DOCUMENT_STATUS_OPTIONS"]
+    canonical_preparer = ctx.get("canonical_preparer", normalize_text)
     save_preparation_updates = ctx["save_preparation_updates"]
     save_document_bulk_updates = ctx["save_document_bulk_updates"]
     save_document_record = ctx["save_document_record"]
@@ -261,7 +425,7 @@ def _render_general_client_admin(
 
     client_id = int(selected_row["client_id"])
     checkpoint_map = _build_checkpoint_map(checkpoints_df, client_id)
-    assigned_options = _assigned_options(team_df, normalize_text)
+    assigned_options = _assigned_options(team_df, normalize_text, canonical_preparer)
     current_responsible = normalize_text(selected_row["Responsável pelo Preenchimento"]) or "Não atribuído"
     current_status = normalize_text(selected_row["Status Preenchimento"]) or "SEM STATUS"
     responsible_options = list(dict.fromkeys([current_responsible, *assigned_options]))
@@ -671,11 +835,12 @@ def render_preparation_editor(
 ) -> None:
     st = ctx["st"]
     normalize_text = ctx["normalize_text"]
+    canonical_preparer = ctx.get("canonical_preparer", normalize_text)
     build_available_preparation_queue = ctx["build_available_preparation_queue"]
 
     st.header("Preenchimento")
 
-    acting_as = normalize_text(user_profile.get("display_name", "")) or "Equipe"
+    acting_as = canonical_preparer(user_profile.get("display_name", "")) or "Equipe"
     can_edit_preparation = user_profile.get("permission_level") in {"full", "status_only"}
     can_edit_full_preparation = can_edit_preparation
 
@@ -769,6 +934,8 @@ def render_preparation_editor(
         )
 
     with general_tab:
+        _render_general_dashboard(st, ctx["pd"], general_df, normalize_text)
+        st.divider()
         filtered_general_df = _render_general_table(st, general_df, normalize_text)
         if filtered_general_df.empty:
             st.info("Nenhum cliente encontrado com os filtros atuais.")

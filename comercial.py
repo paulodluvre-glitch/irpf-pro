@@ -146,7 +146,10 @@ def _render_document_maintenance(
     pd = ctx["pd"]
     date = ctx["date"]
     normalize_text = ctx["normalize_text"]
-    document_type_options = ctx.get("DOCUMENT_TYPE_OPTIONS", ["Despesas Dedutíveis", "Informe de Rendimentos", "Informes Bancários"])
+    document_type_options = ctx.get(
+        "DOCUMENT_TYPE_OPTIONS",
+        ["Despesas Dedutíveis", "Informe de Rendimentos", "Informes Bancários", "Outros"],
+    )
     document_status_options = ctx.get("DOCUMENT_STATUS_OPTIONS", ["PENDENTE", "RECEBIDO", "SOLICITAR DOCUMENTO", "SEM STATUS"])
 
     if show_list and client_documents_df.empty:
@@ -302,6 +305,10 @@ def render_registry_page(
     normalize_key = ctx["normalize_key"]
     normalize_cpf = ctx["normalize_cpf"]
     normalize_phone = ctx["normalize_phone"]
+    canonical_preparer = ctx.get("canonical_preparer", normalize_text)
+    canonical_complexity = ctx.get("canonical_complexity", normalize_text)
+    canonical_group_label = ctx.get("canonical_group_label", normalize_text)
+    canonical_status = ctx.get("canonical_status", normalize_text)
     status_options = ctx["STATUS_OPTIONS"]
     save_client_record = ctx["save_client_record"]
     save_document_record = ctx["save_document_record"]
@@ -317,10 +324,15 @@ def render_registry_page(
         return
 
     can_manage_records = bool(user_profile.get("can_manage_records", False))
-    assigned_options = ["Não atribuído"] + sorted(
-        set(
-            team_df["name"].dropna().tolist()
-            + ["Wanessa", "Paulo", "Valdivone", "Michelle", "Erlane", "Duda", "Malu", "Heverton", "Renato"]
+    assigned_options = list(
+        dict.fromkeys(
+            ["Não atribuído"]
+            + sorted(
+                set(
+                    team_df["name"].dropna().map(canonical_preparer).tolist()
+                    + ["Wanessa", "Paulo", "Valdivone", "Michelle", "Erlane", "Duda", "Malu", "Heverton", "Renato"]
+                )
+            )
         )
     )
 
@@ -328,9 +340,15 @@ def render_registry_page(
         st.warning("Seu usuário pode consultar, mas não alterar cadastros ou documentos.")
 
     selectable_names = ["Novo cliente"] + sorted(people_df["NOME"].dropna().unique().tolist())
+    pending_selected_name = st.session_state.pop("registry_client_select_pending", None)
+    selected_index = 0
+    if pending_selected_name and pending_selected_name in selectable_names:
+        st.session_state.pop("registry_client_select", None)
+        selected_index = selectable_names.index(pending_selected_name)
     selected_name = st.selectbox(
         "Cliente",
         options=selectable_names,
+        index=selected_index,
         key="registry_client_select",
     )
     selected_row = None if selected_name == "Novo cliente" else people_df[people_df["NOME"] == selected_name].iloc[0]
@@ -434,11 +452,11 @@ def render_registry_page(
                 {
                     "normalized_name": normalized_name,
                     "full_name": normalize_text(full_name),
-                    "group_name": normalize_text(group_name),
+                    "group_name": canonical_group_label(group_name),
                     "meeting_status": normalize_text(meeting_status),
-                    "complexity_level": normalize_text(complexity),
-                    "tax_status": normalize_text(tax_status),
-                    "assigned_preparer": normalize_text(assigned_preparer),
+                    "complexity_level": canonical_complexity(complexity),
+                    "tax_status": canonical_status(tax_status),
+                    "assigned_preparer": canonical_preparer(assigned_preparer),
                     "post_filing_status": normalize_text(post_filing_status),
                     "documentation_status": selected_row["Documentação"] if selected_row is not None else "Sem documentação",
                     "active": True,
@@ -452,7 +470,7 @@ def render_registry_page(
                 },
                 client_id=client_id,
             )
-            st.session_state["registry_client_select"] = normalize_text(full_name)
+            st.session_state["registry_client_select_pending"] = normalize_text(full_name)
             _notify_saved(st, f"Cliente salvo com sucesso. ID {saved_id}.")
             st.rerun()
         except Exception as exc:

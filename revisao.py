@@ -349,6 +349,10 @@ def _render_adjustment_management(
     normalize_key = ctx["normalize_key"]
     normalize_cpf = ctx["normalize_cpf"]
     normalize_phone = ctx["normalize_phone"]
+    canonical_preparer = ctx.get("canonical_preparer", normalize_text)
+    canonical_complexity = ctx.get("canonical_complexity", normalize_text)
+    canonical_group_label = ctx.get("canonical_group_label", normalize_text)
+    canonical_status = ctx.get("canonical_status", normalize_text)
     status_options = ctx["STATUS_OPTIONS"]
     document_type_options = ctx["DOCUMENT_TYPE_OPTIONS"]
     document_status_options = ctx["DOCUMENT_STATUS_OPTIONS"]
@@ -362,13 +366,13 @@ def _render_adjustment_management(
     with st.expander("Alterar responsável e status"):
         responsible_names = sorted(
             set(
-                people_df["Responsável pelo Preenchimento"].dropna().map(normalize_text).tolist()
+                people_df["Responsável pelo Preenchimento"].dropna().map(canonical_preparer).tolist()
                 + ["Não atribuído", "Paulo", "Valdivone", "Michelle", "Erlane", "Duda", "Malu", "Heverton", "Renato"]
             )
         )
-        current_responsible = normalize_text(selected_row["Responsável pelo Preenchimento"]) or "Não atribuído"
+        current_responsible = canonical_preparer(selected_row["Responsável pelo Preenchimento"])
         responsible_options = list(dict.fromkeys([current_responsible, *responsible_names]))
-        current_status = normalize_text(selected_row["Status Preenchimento"]) or "SEM STATUS"
+        current_status = canonical_status(selected_row["Status Preenchimento"])
         status_select_options = list(dict.fromkeys([current_status, *status_options]))
         with st.form(f"adjust_status_form_{client_id}"):
             assigned_preparer = st.selectbox("Responsável pelo preenchimento", options=responsible_options, index=0)
@@ -419,11 +423,11 @@ def _render_adjustment_management(
                     {
                         "normalized_name": normalize_key(full_name),
                         "full_name": normalize_text(full_name),
-                        "group_name": normalize_text(group_name),
+                        "group_name": canonical_group_label(group_name),
                         "meeting_status": normalize_text(meeting_status),
-                        "complexity_level": normalize_text(complexity),
-                        "tax_status": normalize_text(selected_row["Status Preenchimento"]),
-                        "assigned_preparer": normalize_text(selected_row["Responsável pelo Preenchimento"]),
+                        "complexity_level": canonical_complexity(complexity),
+                        "tax_status": canonical_status(selected_row["Status Preenchimento"]),
+                        "assigned_preparer": canonical_preparer(selected_row["Responsável pelo Preenchimento"]),
                         "post_filing_status": normalize_text(selected_row["Status Pós-Envio"]),
                         "documentation_status": normalize_text(selected_row["Documentação"]),
                         "active": True,

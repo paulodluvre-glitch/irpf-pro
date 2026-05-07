@@ -49,6 +49,7 @@ DOCUMENT_TYPE_OPTIONS = [
     "Despesas Dedutíveis",
     "Informe de Rendimentos",
     "Informes Bancários",
+    "Outros",
 ]
 
 DOCUMENT_STATUS_OPTIONS = [
@@ -257,6 +258,82 @@ def normalize_key(value: object) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", text).strip()
 
 
+def canonical_title_label(value: object, default: str = "Não informado") -> str:
+    text = normalize_text(value)
+    if not text:
+        return default
+    acronyms = {"AFAC", "CPF", "CNPJ", "FGTS", "INSS", "IRPF", "MEI", "PJ", "PF", "XP"}
+    words = []
+    for word in text.split():
+        normalized_word = normalize_key(word)
+        words.append(normalized_word if normalized_word in acronyms else word.lower().capitalize())
+    return " ".join(words)
+
+
+def canonical_preparer(value: object) -> str:
+    key = normalize_key(value)
+    if key in {"", "NAO ATRIBUIDO", "NAO ATRIBUIDA", "SEM RESPONSAVEL"}:
+        return "Não atribuído"
+    aliases = {
+        "WANESSA": "Wanessa",
+        "WANESSA APARECIDA": "Wanessa",
+        "WANESSA APARECIDA GESTAOCONTABIL COM": "Wanessa",
+        "HEVERTON": "Heverton",
+        "HEVERTON GESTAOCONTABIL COM": "Heverton",
+        "MICHELLE": "Michelle",
+        "MICHELLE MUSTAFA": "Michelle",
+        "MICHELLE MUSTAFA GESTAOCONTABIL COM": "Michelle",
+        "MARIA LINS": "Duda",
+        "MARIA LINS GESTAOCONTABIL COM": "Duda",
+        "DUDA": "Duda",
+        "MARIA LUIZA": "Malu",
+        "MARIA LUIZA GESTAOCONTABIL COM": "Malu",
+        "MALU": "Malu",
+        "VALDIVONE": "Valdivone",
+        "VALDIVONE DIAS": "Valdivone",
+        "VALDIVONE DIAS GESTAOCONTABIL COM": "Valdivone",
+        "PAULO": "Paulo",
+        "PAULO NUNES": "Paulo",
+        "PAULO NUNES GESTAOCONTABIL COM": "Paulo",
+        "RENATO": "Renato",
+        "RENATO GESTAOCONTABIL COM": "Renato",
+        "ERLANE": "Erlane",
+    }
+    return aliases.get(key, canonical_title_label(value))
+
+
+def canonical_complexity(value: object) -> str:
+    key = normalize_key(value)
+    if key in {"", "NAO INFORMADO", "SEM INFORMACAO"}:
+        return "Não informado"
+    if "BAIX" in key or "SIMPLES" in key or "FACIL" in key:
+        return "Baixo"
+    if "MED" in key:
+        return "Médio"
+    if "MUIT" in key and "ALT" in key:
+        return "Muito alto"
+    if "ALT" in key or "COMPLEX" in key:
+        return "Alto"
+    return canonical_title_label(value)
+
+
+def canonical_group_label(value: object) -> str:
+    return canonical_title_label(value, default="Sem grupo")
+
+
+def canonical_document_status(value: object) -> str:
+    key = normalize_key(value)
+    if key in {"", "SEM STATUS", "NAO INFORMADO"}:
+        return "SEM STATUS"
+    if "RECEB" in key:
+        return "RECEBIDO"
+    if "SOLICIT" in key:
+        return "SOLICITAR DOCUMENTO"
+    if "PEND" in key:
+        return "PENDENTE"
+    return normalize_text(value).upper()
+
+
 def normalize_column(value: object) -> str:
     return normalize_key(value).lower()
 
@@ -319,14 +396,20 @@ def canonical_status(value: object) -> str:
         return "PENDENTE"
     if "TRANSMITID" in normalized:
         return "TRANSMITIDO"
+    if "AGUARD" in normalized and "REUNIAO" in normalized:
+        return "AGUARDANDO REUNIÃO"
+    if "PRONT" in normalized and ("REVISAO" in normalized or "REVISAR" in normalized):
+        return "PRONTO PARA REVISÃO"
     if "REVISAO" in normalized and "RENATO" in normalized:
         return "PRONTO PARA REVISÃO"
+    if "PRONT" in normalized and ("PREENCHER" in normalized or "PREENCHIMENTO" in normalized):
+        return "PRONTO PARA PREENCHER"
     if "PREENCHIMENTO" in normalized:
         return "EM PREENCHIMENTO"
     if "PENDENTE" in normalized:
         return "PENDENTE"
     if "AJUSTE" in normalized:
-        return text
+        return "AJUSTE - HEVERTON"
     return text or "SEM STATUS"
 
 
@@ -338,16 +421,35 @@ def documentation_status(total: int, received: int) -> str:
     return "Recebido parcial"
 
 
-def is_ready_for_preparation(total: int, received: int) -> bool:
+def is_deductible_document_type(value: object) -> bool:
+    key = normalize_key(value)
+    return ("DESPESA" in key and "DEDUT" in key) or "PAGAMENTOS EFETUADOS" in key
+
+
+def parse_missing_document_types(value: object) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        raw_values = value
+    else:
+        raw_values = str(normalize_text(value)).split("\n")
+    return [normalize_text(item) for item in raw_values if normalize_text(item)]
+
+
+def is_ready_for_preparation(total: int, received: int, missing_document_types: object = None) -> bool:
     if total <= 0:
         return False
-    return safe_percent(received, total) > 75
+    missing = max(total - received, 0)
+    if safe_percent(received, total) > 75:
+        return True
+    if received > 0 and missing <= 1:
+        return True
+    missing_types = parse_missing_document_types(missing_document_types)
+    return received > 0 and bool(missing_types) and all(is_deductible_document_type(item) for item in missing_types)
 
 
-def preparation_queue_status(total: int, received: int) -> str:
+def preparation_queue_status(total: int, received: int, missing_document_types: object = None) -> str:
     return (
         PREPARATION_QUEUE_READY_STATUS
-        if is_ready_for_preparation(total, received)
+        if is_ready_for_preparation(total, received, missing_document_types)
         else PREPARATION_QUEUE_WAITING_STATUS
     )
 
@@ -360,7 +462,7 @@ def build_available_preparation_queue(people_df: pd.DataFrame) -> pd.DataFrame:
     if people_df.empty:
         return people_df.copy()
     return people_df[
-        (people_df["% documentação recebida"] > 75)
+        (people_df["Status para Preenchimento"] == PREPARATION_QUEUE_READY_STATUS)
         & people_df["Status Preenchimento"].isin(sorted(AVAILABLE_DECLARATION_STATUSES))
         & people_df["Responsável pelo Preenchimento"].map(is_unassigned_preparer)
     ].copy()
@@ -603,16 +705,12 @@ def parse_clients(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     gov_split = df["Senha Gov"].map(split_gov_access)
     df["CPF"] = df["CPF"].map(normalize_cpf)
     df["NOME"] = df["NOME"].replace("", "Sem nome identificado")
-    df["Grupo"] = df["Grupo"].replace("", "Sem grupo")
+    df["Grupo"] = df["Grupo"].map(canonical_group_label)
     df["Reunião"] = df["Reunião"].replace("", "Sem reunião informada")
-    df["Nivel de Complexidade"] = (
-        df["Nivel de Complexidade"].str.strip().str.title().replace("", "Não informado")
-    )
+    df["Nivel de Complexidade"] = df["Nivel de Complexidade"].map(canonical_complexity)
     df["Documentação Informada"] = df["Status Preenchimento"].map(documentation_hint)
     df["Status Preenchimento"] = df["Status Preenchimento"].map(canonical_status)
-    df["Responsável pelo Preenchimento"] = (
-        df["Responsável pelo Preenchimento"].str.upper().replace("", "Não atribuído")
-    )
+    df["Responsável pelo Preenchimento"] = df["Responsável pelo Preenchimento"].map(canonical_preparer)
     df["Status Pós-Envio"] = df["Status Pós-Envio"].str.upper().replace("", "Não informado")
     df["Telefone"] = df["Telefone"].map(normalize_phone)
     df["Senha Gov"] = gov_split.map(lambda item: item[0])
@@ -632,7 +730,7 @@ def parse_documents(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     df["Nome Pessoa"] = df["Nome Pessoa"].replace("", "Sem nome identificado")
     df["Tipo Documento"] = df["Tipo Documento"].replace("", "Não informado")
     df["Instituição"] = df["Instituição"].replace("", "Não informada")
-    df["Status"] = df["Status"].str.upper().replace("", "SEM STATUS")
+    df["Status"] = df["Status"].map(canonical_document_status)
     df["Última Atualização"] = pd.to_datetime(
         df["Última Atualização"], format="%d/%m/%Y", errors="coerce"
     )
@@ -666,14 +764,16 @@ def get_user_profile(team_df: pd.DataFrame, user_email: str, source: str) -> dic
             row = match.iloc[0]
             return {
                 "email": normalized_email,
-                "display_name": normalize_text(row.get("display_name", "")) or normalize_text(row.get("name", "")) or normalized_email,
+                "display_name": canonical_preparer(
+                    normalize_text(row.get("display_name", "")) or normalize_text(row.get("name", "")) or normalized_email
+                ),
                 "allowed_sectors": parse_allowed_sectors(row.get("allowed_sectors", "")),
                 "can_manage_records": bool(row.get("can_manage_records", False)),
                 "permission_level": normalize_text(row.get("permission_level", "")) or "full",
             }
     return {
         "email": normalized_email,
-        "display_name": normalized_email or "Usuário",
+        "display_name": canonical_preparer(normalized_email) if normalized_email else "Usuário",
         "allowed_sectors": [],
         "can_manage_records": False,
         "permission_level": "read_only",
@@ -734,12 +834,12 @@ def load_supabase_bundle(client: Client) -> dict[str, pd.DataFrame]:
                 "client_id": client_df["id"],
                 "CPF": "",
                 "NOME": client_df["full_name"].map(normalize_text),
-                "Grupo": client_df["group_name"].map(normalize_text).replace("", "Sem grupo"),
+                "Grupo": client_df["group_name"].map(canonical_group_label),
                 "Reunião": client_df["meeting_status"].map(normalize_text).replace("", "Sem reunião informada"),
-                "Nivel de Complexidade": client_df["complexity_level"].map(normalize_text).replace("", "Não informado"),
+                "Nivel de Complexidade": client_df["complexity_level"].map(canonical_complexity),
                 "Documentação Informada": client_df["tax_status"].map(documentation_hint),
                 "Status Preenchimento": client_df["tax_status"].map(canonical_status),
-                "Responsável pelo Preenchimento": client_df["assigned_preparer"].map(normalize_text).replace("", "Não atribuído"),
+                "Responsável pelo Preenchimento": client_df["assigned_preparer"].map(canonical_preparer),
                 "Status Pós-Envio": client_df["post_filing_status"].map(normalize_text).replace("", "Não informado"),
                 "Status para Preenchimento": (
                     client_df["preparation_queue_status"].map(normalize_text)
@@ -776,7 +876,7 @@ def load_supabase_bundle(client: Client) -> dict[str, pd.DataFrame]:
                 "Nome Pessoa": client_info["full_name"],
                 "Tipo Documento": normalize_text(row.get("document_type", "")) or "Não informado",
                 "Instituição": normalize_text(row.get("institution", "")) or "Não informada",
-                "Status": normalize_text(row.get("status", "")).upper() or "SEM STATUS",
+                "Status": canonical_document_status(row.get("status", "")),
                 "Última Atualização": pd.to_datetime(row.get("last_update"), errors="coerce"),
                 "chave_controle": normalize_text(row.get("control_key", "")),
                 "Observação Documento": normalize_text(row.get("notes", "")),
@@ -819,6 +919,13 @@ def load_supabase_bundle(client: Client) -> dict[str, pd.DataFrame]:
     team_df = pd.DataFrame(team_rows).fillna("")
     if team_df.empty:
         team_df = default_team_df()
+    else:
+        if "name" in team_df.columns:
+            team_df["name"] = team_df["name"].map(canonical_preparer)
+        if "display_name" in team_df.columns:
+            team_df["display_name"] = team_df["display_name"].map(canonical_preparer)
+        if "email" in team_df.columns:
+            team_df["email"] = team_df["email"].map(lambda value: normalize_text(value).lower())
 
     checkpoints_df = pd.DataFrame(checkpoint_rows)
     if checkpoints_df.empty:
@@ -865,6 +972,14 @@ def build_people_summary(clients_df: pd.DataFrame, documents_df: pd.DataFrame) -
                     ]["documento_descricao_com_obs"]
                 ),
             ),
+            tipos_documentos_faltantes=(
+                "Tipo Documento",
+                lambda values: list_join(
+                    documents_df.loc[values.index][
+                        documents_df.loc[values.index, "Status"] != "RECEBIDO"
+                    ]["Tipo Documento"]
+                ),
+            ),
             ultima_atualizacao_docs=("Última Atualização", "max"),
         )
         .reset_index()
@@ -905,15 +1020,15 @@ def build_people_summary(clients_df: pd.DataFrame, documents_df: pd.DataFrame) -
         people_df["client_id"] = people_df["client_id"].astype(int)
 
     people_df["NOME"] = people_df["NOME"].replace("", pd.NA).fillna(people_df["nome_documentos"])
-    people_df["Grupo"] = people_df["Grupo"].fillna("Sem grupo")
+    people_df["Grupo"] = people_df["Grupo"].fillna("Sem grupo").map(canonical_group_label)
     people_df["Reunião"] = people_df["Reunião"].fillna("Sem reunião informada")
-    people_df["Nivel de Complexidade"] = people_df["Nivel de Complexidade"].fillna("Não informado")
+    people_df["Nivel de Complexidade"] = people_df["Nivel de Complexidade"].fillna("Não informado").map(canonical_complexity)
     if "Documentação Informada" in people_df.columns:
         people_df["Documentação Informada"] = people_df["Documentação Informada"].fillna("")
-    people_df["Status Preenchimento"] = people_df["Status Preenchimento"].fillna("SEM STATUS")
+    people_df["Status Preenchimento"] = people_df["Status Preenchimento"].fillna("SEM STATUS").map(canonical_status)
     if "Status para Preenchimento" in people_df.columns:
         people_df["Status para Preenchimento"] = people_df["Status para Preenchimento"].fillna("")
-    people_df["Responsável pelo Preenchimento"] = people_df["Responsável pelo Preenchimento"].fillna("Não atribuído")
+    people_df["Responsável pelo Preenchimento"] = people_df["Responsável pelo Preenchimento"].fillna("Não atribuído").map(canonical_preparer)
 
     for column in ["CPF", "Telefone", "Senha Gov", "Cadastro de Procuração"]:
         if column in people_df.columns:
@@ -931,9 +1046,17 @@ def build_people_summary(clients_df: pd.DataFrame, documents_df: pd.DataFrame) -
         axis=1,
     )
     people_df["Status para Preenchimento"] = people_df.apply(
-        lambda row: preparation_queue_status(int(row["total_documentos"]), int(row["documentos_recebidos"])),
+        lambda row: preparation_queue_status(
+            int(row["total_documentos"]),
+            int(row["documentos_recebidos"]),
+            row.get("tipos_documentos_faltantes", ""),
+        ),
         axis=1,
     )
+    auto_status_mask = people_df["Status Preenchimento"].isin(["", "SEM STATUS", "PENDENTE", "PRONTO PARA PREENCHER"])
+    ready_mask = people_df["Status para Preenchimento"] == PREPARATION_QUEUE_READY_STATUS
+    people_df.loc[auto_status_mask & ready_mask, "Status Preenchimento"] = "PRONTO PARA PREENCHER"
+    people_df.loc[auto_status_mask & ~ready_mask, "Status Preenchimento"] = "PENDENTE"
     people_df["% documentação recebida"] = people_df.apply(
         lambda row: safe_percent(row["documentos_recebidos"], row["total_documentos"]),
         axis=1,
@@ -1383,7 +1506,19 @@ def render_sector_selector(user_profile: dict[str, object]) -> str:
 
 def save_client_record(client: Client, client_payload: dict[str, object], private_payload: dict[str, object], client_id: int | None = None) -> int:
     timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
-    client_payload = {**client_payload, "updated_at": timestamp}
+    client_payload = {
+        **client_payload,
+        "full_name": normalize_text(client_payload.get("full_name", "")),
+        "group_name": canonical_group_label(client_payload.get("group_name", "")),
+        "meeting_status": normalize_text(client_payload.get("meeting_status", "")),
+        "complexity_level": canonical_complexity(client_payload.get("complexity_level", "")),
+        "tax_status": canonical_status(client_payload.get("tax_status", "")),
+        "assigned_preparer": canonical_preparer(client_payload.get("assigned_preparer", "")),
+        "post_filing_status": normalize_text(client_payload.get("post_filing_status", "")),
+        "documentation_status": normalize_text(client_payload.get("documentation_status", "")) or "Sem documentação",
+        "updated_at": timestamp,
+    }
+    client_payload["normalized_name"] = normalize_key(client_payload.get("normalized_name") or client_payload["full_name"])
     if client_id is None:
         response = client.table("clients").insert(client_payload).execute()
         saved_row = (response.data or [None])[0]
@@ -1409,23 +1544,29 @@ def save_client_record(client: Client, client_payload: dict[str, object], privat
 
 
 def refresh_client_documentation_status(client: Client, client_id: int) -> None:
-    docs_response = client.table("documents").select("status").eq("client_id", client_id).execute()
-    statuses = [normalize_text(row.get("status", "")).upper() for row in (docs_response.data or [])]
+    docs_response = client.table("documents").select("status, document_type").eq("client_id", client_id).execute()
+    statuses = [canonical_document_status(row.get("status", "")) for row in (docs_response.data or [])]
     total = len(statuses)
     received = sum(status == "RECEBIDO" for status in statuses)
+    missing_document_types = [
+        row.get("document_type", "")
+        for row in (docs_response.data or [])
+        if canonical_document_status(row.get("status", "")) != "RECEBIDO"
+    ]
     current_client_response = client.table("clients").select("tax_status").eq("id", client_id).limit(1).execute()
     current_client = (current_client_response.data or [{}])[0]
     current_tax_status = normalize_text(current_client.get("tax_status", "")).upper()
     documentation_label = documentation_status(total, received)
+    queue_label = preparation_queue_status(total, received, missing_document_types)
     timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
     update_payload = {
         "documentation_status": documentation_label,
-        "preparation_queue_status": preparation_queue_status(total, received),
+        "preparation_queue_status": queue_label,
         "updated_at": timestamp,
     }
     auto_managed_statuses = {"", "SEM STATUS", "PENDENTE", "PRONTO PARA PREENCHER"}
     if current_tax_status in auto_managed_statuses:
-        update_payload["tax_status"] = "PRONTO PARA PREENCHER" if documentation_label == "Recebido total" else "PENDENTE"
+        update_payload["tax_status"] = "PRONTO PARA PREENCHER" if queue_label == PREPARATION_QUEUE_READY_STATUS else "PENDENTE"
     try:
         client.table("clients").update(update_payload).eq("id", client_id).execute()
     except Exception as exc:
@@ -1449,7 +1590,7 @@ def save_document_record(
         "client_id": client_id,
         "document_type": normalize_text(document_type) or "Não informado",
         "institution": normalize_text(institution) or "Não informada",
-        "status": normalize_text(status).upper() or "SEM STATUS",
+        "status": canonical_document_status(status),
         "last_update": last_update.isoformat() if last_update else None,
         "control_key": normalize_text(control_key),
         "notes": normalize_text(notes),
@@ -1479,7 +1620,7 @@ def update_document_record(
     payload = {
         "document_type": normalize_text(document_type) or "Não informado",
         "institution": normalize_text(institution) or "Não informada",
-        "status": normalize_text(status).upper() or "SEM STATUS",
+        "status": canonical_document_status(status),
         "last_update": last_update.isoformat() if last_update else None,
         "control_key": normalize_text(control_key),
         "notes": normalize_text(notes),
@@ -1500,7 +1641,7 @@ def save_document_bulk_updates(client: Client, document_rows: list[dict], client
     timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
     for row in document_rows:
         payload = {
-            "status": normalize_text(row.get("Status", "")).upper() or "SEM STATUS",
+            "status": canonical_document_status(row.get("Status", "")),
             "last_update": row.get("last_update"),
             "updated_at": timestamp,
         }
@@ -1533,8 +1674,8 @@ def save_batch_client_updates(client: Client, rows: list[dict], acting_as: str) 
     for row in rows:
         client.table("clients").update(
             {
-                "assigned_preparer": normalize_text(row.get("Responsável pelo Preenchimento", "")),
-                "tax_status": normalize_text(row.get("Status Preenchimento", "")),
+                "assigned_preparer": canonical_preparer(row.get("Responsável pelo Preenchimento", "")),
+                "tax_status": canonical_status(row.get("Status Preenchimento", "")),
                 "updated_at": timestamp,
             }
         ).eq("id", int(row["client_id"])).execute()
@@ -1979,6 +2120,8 @@ def save_preparation_updates(
     allow_checkpoint_updates: bool = True,
 ) -> None:
     timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
+    assigned_preparer = canonical_preparer(assigned_preparer)
+    tax_status = canonical_status(tax_status)
     client.table("clients").update(
         {
             "assigned_preparer": assigned_preparer,
@@ -2021,6 +2164,11 @@ def build_sector_context() -> dict[str, object]:
         "normalize_key": normalize_key,
         "normalize_cpf": normalize_cpf,
         "normalize_phone": normalize_phone,
+        "canonical_preparer": canonical_preparer,
+        "canonical_complexity": canonical_complexity,
+        "canonical_group_label": canonical_group_label,
+        "canonical_status": canonical_status,
+        "canonical_document_status": canonical_document_status,
         "is_unassigned_preparer": is_unassigned_preparer,
         "build_available_preparation_queue": build_available_preparation_queue,
         "status_progress_percent": status_progress_percent,
