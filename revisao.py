@@ -34,31 +34,118 @@ def _normalize_date_to_iso(value, pd) -> str | None:
 
 def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_text, available_df) -> None:
     counts = people_df["Status Preenchimento"].value_counts()
-    metric_1, metric_2, metric_3, metric_4 = st.columns(4)
-    metric_5, metric_6, metric_7, metric_8 = st.columns(4)
-    metric_9, _, _, _ = st.columns(4)
-
     transmitted_delta = _metric_delta(history_df, snapshot_df, "transmitidas")
     review_delta = _metric_delta(history_df, snapshot_df, "em_revisao")
 
-    with metric_1:
-        st.metric("Total de declarações", len(people_df))
-    with metric_2:
-        st.metric("Pendentes", int(counts.get("PENDENTE", 0)))
-    with metric_3:
-        st.metric("Prontas pra preenchimento", len(available_df))
-    with metric_4:
-        st.metric("Em preenchimento", int(counts.get("EM PREENCHIMENTO", 0)))
-    with metric_5:
-        st.metric("Em revisão", int(snapshot_df.loc[0, "em_revisao"]), delta=review_delta)
-    with metric_6:
-        st.metric("Em ajuste", int(counts.get("AJUSTE - HEVERTON", 0)))
-    with metric_7:
-        st.metric("Transmitidas", int(snapshot_df.loc[0, "transmitidas"]), delta=transmitted_delta)
-    with metric_8:
-        st.metric("Aguardando reunião", int(counts.get("AGUARDANDO REUNIÃO", 0)))
-    with metric_9:
-        st.metric("Aguard. confirmação", int(counts.get("AGUARD. CONFIRMAÇÃO DO CLIENTE", 0)))
+    def delta_html(delta: int | None) -> str:
+        if delta is None or delta == 0:
+            return ""
+        sign = "+" if delta > 0 else ""
+        css_class = "positive" if delta > 0 else "negative"
+        return f"<span class='flow-delta {css_class}'>{sign}{delta}</span>"
+
+    def flow_card(label: str, value: int, delta: int | None = None, show_arrow: bool = True) -> str:
+        arrow = "<div class='flow-arrow'>&gt;</div>" if show_arrow else ""
+        return (
+            "<div class='flow-item'>"
+            "<div class='flow-card'>"
+            f"<span>{label}</span>"
+            f"<strong>{value}</strong>"
+            f"{delta_html(delta)}"
+            "</div>"
+            f"{arrow}"
+            "</div>"
+        )
+
+    rows = [
+        [
+            ("Total de declarações", len(people_df), None),
+            ("Pendentes", int(counts.get("PENDENTE", 0)), None),
+            ("Prontas pra preenchimento", len(available_df), None),
+            ("Em preenchimento", int(counts.get("EM PREENCHIMENTO", 0)), None),
+        ],
+        [
+            ("Em revisão", int(snapshot_df.loc[0, "em_revisao"]), review_delta),
+            ("Em ajuste", int(counts.get("AJUSTE - HEVERTON", 0)), None),
+            ("Aguardando reunião", int(counts.get("AGUARDANDO REUNIÃO", 0)), None),
+            ("Aguard. confirmação", int(counts.get("AGUARD. CONFIRMAÇÃO DO CLIENTE", 0)), None),
+        ],
+        [
+            ("Transmitidas", int(snapshot_df.loc[0, "transmitidas"]), transmitted_delta),
+        ],
+    ]
+    rendered_rows = []
+    for row_index, row in enumerate(rows):
+        cards = [
+            flow_card(label, value, delta, show_arrow=not (row_index == len(rows) - 1 and index == len(row) - 1))
+            for index, (label, value, delta) in enumerate(row)
+        ]
+        rendered_rows.append("<div class='flow-row'>" + "".join(cards) + "</div>")
+
+    st.markdown(
+        """
+        <style>
+            .flow-board {
+                display: grid;
+                gap: 12px;
+                margin: 6px 0 20px;
+            }
+            .flow-row {
+                display: flex;
+                align-items: stretch;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .flow-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .flow-card {
+                min-width: 170px;
+                border: 1px solid rgba(49, 51, 63, .18);
+                border-radius: 12px;
+                padding: 14px 16px;
+                background: linear-gradient(180deg, #fff, #f8fafc);
+                box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
+            }
+            .flow-card span {
+                display: block;
+                color: #64748b;
+                font-size: .82rem;
+                font-weight: 650;
+                line-height: 1.2;
+                margin-bottom: 8px;
+            }
+            .flow-card strong {
+                color: #0f172a;
+                display: inline-block;
+                font-size: 1.85rem;
+                line-height: 1;
+            }
+            .flow-arrow {
+                color: #94a3b8;
+                font-size: 1.5rem;
+                font-weight: 800;
+            }
+            .flow-delta {
+                display: inline-block !important;
+                font-size: .85rem !important;
+                margin: 0 0 0 8px !important;
+            }
+            .flow-delta.positive { color: #15803d; }
+            .flow-delta.negative { color: #b91c1c; }
+            @media (max-width: 760px) {
+                .flow-card { min-width: 138px; }
+                .flow-arrow { display: none; }
+            }
+        </style>
+        <div class='flow-board'>
+        """
+        + "".join(rendered_rows)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_analysis_filters(st, people_df, normalize_text):
