@@ -150,6 +150,7 @@ STATUS_OPTIONS = [
     "PRONTO PARA REVISÃO",
     "AJUSTE - HEVERTON",
     "AGUARDANDO REUNIÃO",
+    "AGUARD. CONFIRMAÇÃO DO CLIENTE",
     "TRANSMITIDO",
     "SEM STATUS",
 ]
@@ -165,8 +166,9 @@ STATUS_PROGRESS_MAP = {
     "EM PREENCHIMENTO": 25,
     "PRONTO PARA REVISÃO": 55,
     "AJUSTE - HEVERTON": 85,
+    "AGUARDANDO REUNIÃO": 90,
+    "AGUARD. CONFIRMAÇÃO DO CLIENTE": 95,
     "TRANSMITIDO": 100,
-    "AGUARDANDO REUNIÃO": 100,
 }
 
 STAGE_CHECKPOINTS = {
@@ -185,15 +187,20 @@ STAGE_CHECKPOINTS = {
         "step_label": "Declaração foi para ajuste",
         "date_column": "Data foi para ajuste",
     },
-    "TRANSMITIDO": {
-        "step_key": "etapa_transmitido",
-        "step_label": "Declaração transmitida",
-        "date_column": "Data transmissão",
-    },
     "AGUARDANDO REUNIÃO": {
         "step_key": "etapa_aguardando_reuniao",
         "step_label": "Declaração aguardando reunião",
         "date_column": "Data aguardando reunião",
+    },
+    "AGUARD. CONFIRMAÇÃO DO CLIENTE": {
+        "step_key": "etapa_aguardando_confirmacao_cliente",
+        "step_label": "Declaração aguardando confirmação do cliente",
+        "date_column": "Data aguard. confirmação cliente",
+    },
+    "TRANSMITIDO": {
+        "step_key": "etapa_transmitido",
+        "step_label": "Declaração transmitida",
+        "date_column": "Data transmissão",
     },
 }
 STAGE_DATE_COLUMNS = [config["date_column"] for config in STAGE_CHECKPOINTS.values()]
@@ -396,6 +403,8 @@ def canonical_status(value: object) -> str:
         return "PENDENTE"
     if "TRANSMITID" in normalized:
         return "TRANSMITIDO"
+    if "AGUARD" in normalized and "CONFIRMACAO" in normalized and "CLIENTE" in normalized:
+        return "AGUARD. CONFIRMAÇÃO DO CLIENTE"
     if "AGUARD" in normalized and "REUNIAO" in normalized:
         return "AGUARDANDO REUNIÃO"
     if "PRONT" in normalized and ("REVISAO" in normalized or "REVISAR" in normalized):
@@ -1256,8 +1265,9 @@ def attach_progress(people_df: pd.DataFrame, checkpoint_summary_df: pd.DataFrame
         "EM PREENCHIMENTO": "Data foi para preenchimento",
         "PRONTO PARA REVISÃO": "Data chegou para revisão",
         "AJUSTE - HEVERTON": "Data foi para ajuste",
-        "TRANSMITIDO": "Data transmissão",
         "AGUARDANDO REUNIÃO": "Data aguardando reunião",
+        "AGUARD. CONFIRMAÇÃO DO CLIENTE": "Data aguard. confirmação cliente",
+        "TRANSMITIDO": "Data transmissão",
     }
     for status, column in stage_fallbacks.items():
         mask = (merged["Status Preenchimento"] == status) & merged[column].isna()

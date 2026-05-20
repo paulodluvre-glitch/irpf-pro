@@ -36,6 +36,7 @@ def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_te
     counts = people_df["Status Preenchimento"].value_counts()
     metric_1, metric_2, metric_3, metric_4 = st.columns(4)
     metric_5, metric_6, metric_7, metric_8 = st.columns(4)
+    metric_9, _, _, _ = st.columns(4)
 
     transmitted_delta = _metric_delta(history_df, snapshot_df, "transmitidas")
     review_delta = _metric_delta(history_df, snapshot_df, "em_revisao")
@@ -56,6 +57,8 @@ def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_te
         st.metric("Transmitidas", int(snapshot_df.loc[0, "transmitidas"]), delta=transmitted_delta)
     with metric_8:
         st.metric("Aguardando reunião", int(counts.get("AGUARDANDO REUNIÃO", 0)))
+    with metric_9:
+        st.metric("Aguard. confirmação", int(counts.get("AGUARD. CONFIRMAÇÃO DO CLIENTE", 0)))
 
 
 def _render_analysis_filters(st, people_df, normalize_text):
@@ -290,7 +293,11 @@ def _render_review_action_form(
         )
         selected_final_status = next_status
         if final_status_options:
-            selected_final_status = st.selectbox("Status final", options=final_status_options)
+            selected_final_status = st.selectbox(
+                "Status final",
+                options=final_status_options,
+                index=final_status_options.index(next_status) if next_status in final_status_options else 0,
+            )
         submitted = st.form_submit_button("Salvar e seguir", use_container_width=True)
 
     if not submitted:
@@ -583,8 +590,9 @@ def render_review_page(
                 "Data foi para preenchimento",
                 "Data chegou para revisão",
                 "Data foi para ajuste",
-                "Data transmissão",
                 "Data aguardando reunião",
+                "Data aguard. confirmação cliente",
+                "Data transmissão",
             ]
         ].copy().rename(
             columns={
@@ -671,5 +679,5 @@ def render_review_page(
                 observation_step_key="heverton_observacoes",
                 reviewed_step_key="heverton_revisado",
                 observation_label="Observações gerais finais",
-                final_status_options=["TRANSMITIDO", "AGUARDANDO REUNIÃO"],
+                final_status_options=["AGUARDANDO REUNIÃO", "AGUARD. CONFIRMAÇÃO DO CLIENTE", "TRANSMITIDO"],
             )
