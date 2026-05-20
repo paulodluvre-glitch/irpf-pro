@@ -46,9 +46,14 @@ def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_te
 
     def flow_card(label: str, value: int, delta: int | None = None, show_arrow: bool = True) -> str:
         arrow = "<div class='flow-arrow'>&gt;</div>" if show_arrow else ""
+        card_class = "flow-card"
+        if label == "Pendentes":
+            card_class += " pending"
+        elif label == "Transmitidas":
+            card_class += " transmitted"
         return (
             "<div class='flow-item'>"
-            "<div class='flow-card'>"
+            f"<div class='{card_class}'>"
             f"<span>{label}</span>"
             f"<strong>{value}</strong>"
             f"{delta_html(delta)}"
@@ -102,35 +107,49 @@ def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_te
                 gap: 10px;
             }
             .flow-card {
-                min-width: 170px;
+                min-width: 190px;
                 border: 1px solid rgba(49, 51, 63, .18);
                 border-radius: 12px;
-                padding: 14px 16px;
-                background: linear-gradient(180deg, #fff, #f8fafc);
+                padding: 16px 18px;
+                background: #ffffff;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
             }
             .flow-card span {
                 display: block;
-                color: #64748b;
-                font-size: .82rem;
-                font-weight: 650;
-                line-height: 1.2;
-                margin-bottom: 8px;
+                color: #111827;
+                font-size: 1rem;
+                font-weight: 750;
+                line-height: 1.25;
+                margin-bottom: 10px;
             }
             .flow-card strong {
-                color: #0f172a;
+                color: #111827;
                 display: inline-block;
-                font-size: 1.85rem;
+                font-size: 2.05rem;
                 line-height: 1;
             }
+            .flow-card.pending span,
+            .flow-card.pending strong {
+                color: #b91c1c;
+            }
+            .flow-card.transmitted {
+                background: #064e3b;
+                border-color: #052e24;
+                box-shadow: 0 2px 5px rgba(6, 78, 59, .22);
+            }
+            .flow-card.transmitted span,
+            .flow-card.transmitted strong,
+            .flow-card.transmitted .flow-delta {
+                color: #ffffff !important;
+            }
             .flow-arrow {
-                color: #94a3b8;
-                font-size: 1.5rem;
+                color: #111827;
+                font-size: 1.65rem;
                 font-weight: 800;
             }
             .flow-delta {
                 display: inline-block !important;
-                font-size: .85rem !important;
+                font-size: .95rem !important;
                 margin: 0 0 0 8px !important;
             }
             .flow-delta.positive { color: #15803d; }
