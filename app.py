@@ -150,6 +150,7 @@ STATUS_OPTIONS = [
     "PRONTO PARA REVISÃO",
     "AJUSTE - HEVERTON",
     "AGUARDANDO REUNIÃO",
+    "ENVIAR AO CLIENTE PARA REVISÃO",
     "AGUARD. CONFIRMAÇÃO DO CLIENTE",
     "TRANSMITIDO",
     "SEM STATUS",
@@ -167,6 +168,7 @@ STATUS_PROGRESS_MAP = {
     "PRONTO PARA REVISÃO": 55,
     "AJUSTE - HEVERTON": 85,
     "AGUARDANDO REUNIÃO": 90,
+    "ENVIAR AO CLIENTE PARA REVISÃO": 93,
     "AGUARD. CONFIRMAÇÃO DO CLIENTE": 95,
     "TRANSMITIDO": 100,
 }
@@ -191,6 +193,11 @@ STAGE_CHECKPOINTS = {
         "step_key": "etapa_aguardando_reuniao",
         "step_label": "Declaração aguardando reunião",
         "date_column": "Data aguardando reunião",
+    },
+    "ENVIAR AO CLIENTE PARA REVISÃO": {
+        "step_key": "etapa_enviar_cliente_revisao",
+        "step_label": "Declaração enviada ao cliente para revisão",
+        "date_column": "Data envio cliente revisão",
     },
     "AGUARD. CONFIRMAÇÃO DO CLIENTE": {
         "step_key": "etapa_aguardando_confirmacao_cliente",
@@ -403,6 +410,12 @@ def canonical_status(value: object) -> str:
         return "PENDENTE"
     if "TRANSMITID" in normalized:
         return "TRANSMITIDO"
+    if (
+        ("ENVIAR" in normalized or "ENVIADO" in normalized)
+        and "CLIENTE" in normalized
+        and ("REVISAO" in normalized or "REVISAR" in normalized)
+    ):
+        return "ENVIAR AO CLIENTE PARA REVISÃO"
     if "AGUARD" in normalized and "CONFIRMACAO" in normalized and "CLIENTE" in normalized:
         return "AGUARD. CONFIRMAÇÃO DO CLIENTE"
     if "AGUARD" in normalized and "REUNIAO" in normalized:
@@ -1266,6 +1279,7 @@ def attach_progress(people_df: pd.DataFrame, checkpoint_summary_df: pd.DataFrame
         "PRONTO PARA REVISÃO": "Data chegou para revisão",
         "AJUSTE - HEVERTON": "Data foi para ajuste",
         "AGUARDANDO REUNIÃO": "Data aguardando reunião",
+        "ENVIAR AO CLIENTE PARA REVISÃO": "Data envio cliente revisão",
         "AGUARD. CONFIRMAÇÃO DO CLIENTE": "Data aguard. confirmação cliente",
         "TRANSMITIDO": "Data transmissão",
     }

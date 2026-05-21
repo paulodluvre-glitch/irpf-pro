@@ -73,6 +73,7 @@ def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_te
             ("Em revisão", int(snapshot_df.loc[0, "em_revisao"]), review_delta),
             ("Em ajuste", int(counts.get("AJUSTE - HEVERTON", 0)), None),
             ("Aguardando reunião", int(counts.get("AGUARDANDO REUNIÃO", 0)), None),
+            ("Enviar ao cliente p/ revisão", int(counts.get("ENVIAR AO CLIENTE PARA REVISÃO", 0)), None),
             ("Aguard. confirmação", int(counts.get("AGUARD. CONFIRMAÇÃO DO CLIENTE", 0)), None),
         ],
         [
@@ -697,6 +698,7 @@ def render_review_page(
                 "Data chegou para revisão",
                 "Data foi para ajuste",
                 "Data aguardando reunião",
+                "Data envio cliente revisão",
                 "Data aguard. confirmação cliente",
                 "Data transmissão",
             ]
@@ -785,5 +787,10 @@ def render_review_page(
                 observation_step_key="heverton_observacoes",
                 reviewed_step_key="heverton_revisado",
                 observation_label="Observações gerais finais",
-                final_status_options=["AGUARDANDO REUNIÃO", "AGUARD. CONFIRMAÇÃO DO CLIENTE", "TRANSMITIDO"],
+                final_status_options=[
+                    "AGUARDANDO REUNIÃO",
+                    "ENVIAR AO CLIENTE PARA REVISÃO",
+                    "AGUARD. CONFIRMAÇÃO DO CLIENTE",
+                    "TRANSMITIDO",
+                ],
             )
