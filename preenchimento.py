@@ -7,6 +7,15 @@ def _normalized(value: object, normalize_text) -> str:
     return normalize_text(value).upper()
 
 
+def _merged_options(primary_options=None, current_values=None) -> list[str]:
+    merged: list[str] = []
+    for value in [*(primary_options or []), *(current_values or [])]:
+        text = str(value).strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged
+
+
 def _is_unassigned(value: object, normalize_text) -> bool:
     return _normalized(value, normalize_text) in {"", "NÃO ATRIBUÍDO", "NAO ATRIBUIDO"}
 
@@ -253,8 +262,13 @@ def _render_general_dashboard(st, pd, people_df, normalize_text) -> None:
     )
 
 
-def _render_general_table(st, people_df, normalize_text):
+def _render_general_table(st, people_df, normalize_text, status_options=None, canonical_status=None):
+    def status_label(value):
+        return canonical_status(value) if canonical_status else normalize_text(value)
+
     filtered_df = people_df.copy()
+    current_statuses = sorted(filtered_df["Status Preenchimento"].dropna().map(status_label).unique())
+    status_filter_options = _merged_options(status_options, current_statuses)
     filter_col_1, filter_col_2, filter_col_3 = st.columns(3)
     with filter_col_1:
         name_filter = st.text_input("Nome", key="prep_general_name_filter")
@@ -266,7 +280,7 @@ def _render_general_table(st, people_df, normalize_text):
     with filter_col_2:
         status_filter = st.multiselect(
             "Status",
-            options=sorted(filtered_df["Status Preenchimento"].dropna().unique()),
+            options=status_filter_options,
             key="prep_general_status_filter",
         )
         documentation_filter = st.multiselect(
@@ -291,7 +305,8 @@ def _render_general_table(st, people_df, normalize_text):
     if group_filter:
         filtered_df = filtered_df[filtered_df["Grupo"].isin(group_filter)].copy()
     if status_filter:
-        filtered_df = filtered_df[filtered_df["Status Preenchimento"].isin(status_filter)].copy()
+        filtered_statuses = filtered_df["Status Preenchimento"].map(status_label)
+        filtered_df = filtered_df[filtered_statuses.isin(status_filter)].copy()
     if documentation_filter:
         filtered_df = filtered_df[filtered_df["Documentação"].isin(documentation_filter)].copy()
     if responsible_filter:
@@ -837,6 +852,8 @@ def render_preparation_editor(
     normalize_text = ctx["normalize_text"]
     canonical_preparer = ctx.get("canonical_preparer", normalize_text)
     build_available_preparation_queue = ctx["build_available_preparation_queue"]
+    canonical_status = ctx["canonical_status"]
+    status_options = ctx.get("STATUS_OPTIONS", [])
 
     st.header("Preenchimento")
 
@@ -936,7 +953,7 @@ def render_preparation_editor(
     with general_tab:
         _render_general_dashboard(st, ctx["pd"], general_df, normalize_text)
         st.divider()
-        filtered_general_df = _render_general_table(st, general_df, normalize_text)
+        filtered_general_df = _render_general_table(st, general_df, normalize_text, status_options, canonical_status)
         if filtered_general_df.empty:
             st.info("Nenhum cliente encontrado com os filtros atuais.")
             return

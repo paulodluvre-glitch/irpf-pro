@@ -32,8 +32,18 @@ def _normalize_date_to_iso(value, pd) -> str | None:
     return pd.to_datetime(value).date().isoformat()
 
 
-def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_text, available_df) -> None:
-    counts = people_df["Status Preenchimento"].value_counts()
+def _merged_options(primary_options=None, current_values=None) -> list[str]:
+    merged: list[str] = []
+    for value in [*(primary_options or []), *(current_values or [])]:
+        text = str(value).strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged
+
+
+def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_text, available_df, canonical_status=None) -> None:
+    status_series = people_df["Status Preenchimento"].map(canonical_status) if canonical_status else people_df["Status Preenchimento"]
+    counts = status_series.value_counts()
     transmitted_delta = _metric_delta(history_df, snapshot_df, "transmitidas")
     review_delta = _metric_delta(history_df, snapshot_df, "em_revisao")
 
@@ -168,7 +178,13 @@ def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_te
     )
 
 
-def _render_analysis_filters(st, people_df, normalize_text):
+def _render_analysis_filters(st, people_df, normalize_text, status_options=None, canonical_status=None):
+    def status_label(value):
+        return canonical_status(value) if canonical_status else normalize_text(value)
+
+    current_statuses = sorted(people_df["Status Preenchimento"].dropna().map(status_label).unique())
+    status_filter_options = _merged_options(status_options, current_statuses)
+
     filter_col_1, filter_col_2, filter_col_3 = st.columns(3)
     with filter_col_1:
         name_filter = st.text_input("Filtrar por nome", key="review_filter_name")
@@ -180,8 +196,8 @@ def _render_analysis_filters(st, people_df, normalize_text):
     with filter_col_2:
         status_filter = st.multiselect(
             "Status do preenchimento",
-            options=sorted(people_df["Status Preenchimento"].dropna().unique()),
-            default=sorted(people_df["Status Preenchimento"].dropna().unique()),
+            options=status_filter_options,
+            default=status_filter_options,
             key="review_filter_status",
         )
         documentation_filter = st.multiselect(
@@ -206,7 +222,8 @@ def _render_analysis_filters(st, people_df, normalize_text):
     if group_filter:
         filtered_people_df = filtered_people_df[filtered_people_df["Grupo"].isin(group_filter)].copy()
     if status_filter:
-        filtered_people_df = filtered_people_df[filtered_people_df["Status Preenchimento"].isin(status_filter)].copy()
+        filtered_statuses = filtered_people_df["Status Preenchimento"].map(status_label)
+        filtered_people_df = filtered_people_df[filtered_statuses.isin(status_filter)].copy()
     if documentation_filter:
         filtered_people_df = filtered_people_df[filtered_people_df["Documentação"].isin(documentation_filter)].copy()
     if responsible_filter:
@@ -664,6 +681,8 @@ def render_review_page(
     normalize_text = ctx["normalize_text"]
     build_available_preparation_queue = ctx["build_available_preparation_queue"]
     status_progress_percent = ctx["status_progress_percent"]
+    canonical_status = ctx["canonical_status"]
+    status_options = ctx.get("STATUS_OPTIONS", [])
     load_history_remote = ctx["load_history_remote"]
     load_history = ctx["load_history"]
     save_snapshot_remote = ctx["save_snapshot_remote"]
@@ -678,8 +697,8 @@ def render_review_page(
     with analysis_tab:
         history_df = load_history_remote(supabase_client) if supabase_client is not None else load_history()
         available_df = build_available_preparation_queue(people_df)
-        _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_text, available_df)
-        filtered_people_df = _render_analysis_filters(st, people_df, normalize_text)
+        _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_text, available_df, canonical_status)
+        filtered_people_df = _render_analysis_filters(st, people_df, normalize_text, status_options, canonical_status)
 
         consolidated_df = filtered_people_df[
             [
@@ -733,7 +752,8 @@ def render_review_page(
             st.success("Snapshot salvo.")
 
     with review_tab:
-        review_queue_df = people_df[people_df["Status Preenchimento"] == "PRONTO PARA REVISÃO"].copy()
+        canonical_status_series = people_df["Status Preenchimento"].map(canonical_status)
+        review_queue_df = people_df[canonical_status_series == "PRONTO PARA REVISÃO"].copy()
         _render_review_queue(st, normalize_text, review_queue_df, "Fila de revisão do Renato")
         if not review_queue_df.empty:
             selected_name = st.selectbox(
@@ -757,7 +777,7 @@ def render_review_page(
             )
 
     with adjustments_tab:
-        adjust_queue_df = people_df[people_df["Status Preenchimento"] == "AJUSTE - HEVERTON"].copy()
+        adjust_queue_df = people_df[canonical_status_series == "AJUSTE - HEVERTON"].copy()
         _render_review_queue(st, normalize_text, adjust_queue_df, "Fila de ajustes do Heverton")
         if not adjust_queue_df.empty:
             selected_name = st.selectbox(
