@@ -44,6 +44,7 @@ def _merged_options(primary_options=None, current_values=None) -> list[str]:
 def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_text, available_df, canonical_status=None) -> None:
     status_series = people_df["Status Preenchimento"].map(canonical_status) if canonical_status else people_df["Status Preenchimento"]
     counts = status_series.value_counts()
+    ready_for_review_count = int(counts.get("PRONTO PARA REVISÃO", 0))
     transmitted_delta = _metric_delta(history_df, snapshot_df, "transmitidas")
     review_delta = _metric_delta(history_df, snapshot_df, "em_revisao")
 
@@ -80,7 +81,7 @@ def _render_general_metrics(st, people_df, history_df, snapshot_df, normalize_te
             ("Em preenchimento", int(counts.get("EM PREENCHIMENTO", 0)), None),
         ],
         [
-            ("Em revisão", int(snapshot_df.loc[0, "em_revisao"]), review_delta),
+            ("Em revisão", ready_for_review_count, review_delta),
             ("Em ajuste", int(counts.get("AJUSTE - HEVERTON", 0)), None),
             ("Aguardando reunião", int(counts.get("AGUARDANDO REUNIÃO", 0)), None),
             ("Enviar ao cliente p/ revisão", int(counts.get("ENVIAR AO CLIENTE PARA REVISÃO", 0)), None),

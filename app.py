@@ -1437,8 +1437,9 @@ def ensure_daily_snapshot(snapshot_df: pd.DataFrame, supabase_client: Client | N
 
 def build_snapshot(snapshot_date: date, clients_df: pd.DataFrame, people_df: pd.DataFrame) -> pd.DataFrame:
     total_declarations = len(clients_df)
-    transmitted = int((clients_df["Status Preenchimento"] == "TRANSMITIDO").sum())
-    reviewing = int(clients_df["Status Preenchimento"].str.contains("REVISÃO", na=False).sum())
+    status_series = clients_df["Status Preenchimento"].map(canonical_status)
+    transmitted = int((status_series == "TRANSMITIDO").sum())
+    reviewing = int((status_series == "PRONTO PARA REVISÃO").sum())
     docs_any = int((people_df["Documentação"] != "Sem documentação").sum())
     docs_complete = int((people_df["Documentação"] == "Recebido total").sum())
     docs_partial = int((people_df["Documentação"] == "Recebido parcial").sum())
