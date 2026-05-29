@@ -164,6 +164,7 @@ POST_FILING_STATUS_OPTIONS = [
     "NÃO TRANSMITIDO DE FATO",
     "AGUARDANDO PROCESSAMENTO",
     "CAIU NA MALHA",
+    "VERIFICAR STATUS NO E-CAC",
     "STATUS A VERIFICAR",
 ]
 PREPARATION_QUEUE_READY_STATUS = "Pronta para Preenchimento"
@@ -456,6 +457,8 @@ def canonical_post_filing_status(value: object) -> str:
         return "NÃO TRANSMITIDO DE FATO"
     if normalized in {"OK", "STATUS OK"} or ("STATUS" in normalized and "OK" in normalized):
         return "STATUS OK"
+    if "ECAC" in normalized or ("E" in normalized and "CAC" in normalized):
+        return "VERIFICAR STATUS NO E-CAC"
     if "VERIFICAR" in normalized:
         return "STATUS A VERIFICAR"
     return text if text in POST_FILING_STATUS_OPTIONS else "STATUS A VERIFICAR"
