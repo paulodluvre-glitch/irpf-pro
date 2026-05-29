@@ -47,8 +47,10 @@ def _with_post_filing_notes(ctx: dict[str, Any], people_df, checkpoints_df):
 def _apply_filters(ctx: dict[str, Any], source_df, status_options: list[str]):
     st = ctx["st"]
     normalize_text = ctx["normalize_text"]
+    canonical_status = ctx["canonical_status"]
+    declaration_status_options = ctx["STATUS_OPTIONS"]
 
-    filter_cols = st.columns([1.2, 1.2, 1.6])
+    filter_cols = st.columns([1.2, 1.2, 1.2, 1.6])
     with filter_cols[0]:
         selected_statuses = st.multiselect(
             "Status pós-envio",
@@ -56,16 +58,29 @@ def _apply_filters(ctx: dict[str, Any], source_df, status_options: list[str]):
             default=status_options,
         )
     with filter_cols[1]:
+        current_declaration_statuses = source_df["Status Preenchimento"].map(canonical_status)
+        available_declaration_statuses = [
+            status for status in declaration_status_options if status in set(current_declaration_statuses)
+        ]
+        selected_declaration_statuses = st.multiselect(
+            "Status preenchimento",
+            options=available_declaration_statuses,
+            default=available_declaration_statuses,
+        )
+    with filter_cols[2]:
         group_options = sorted(
             [group for group in source_df["Grupo"].dropna().map(normalize_text).unique().tolist() if group]
         )
         selected_groups = st.multiselect("Grupo", options=group_options)
-    with filter_cols[2]:
+    with filter_cols[3]:
         name_filter = st.text_input("Buscar por nome", placeholder="Digite parte do nome do cliente")
 
     filtered_df = source_df.copy()
+    filtered_df["Status Preenchimento"] = filtered_df["Status Preenchimento"].map(canonical_status)
     if selected_statuses:
         filtered_df = filtered_df[filtered_df["Status Pós-Envio"].isin(selected_statuses)]
+    if selected_declaration_statuses:
+        filtered_df = filtered_df[filtered_df["Status Preenchimento"].isin(selected_declaration_statuses)]
     if selected_groups:
         filtered_df = filtered_df[filtered_df["Grupo"].isin(selected_groups)]
     if normalize_text(name_filter):
@@ -76,11 +91,100 @@ def _apply_filters(ctx: dict[str, Any], source_df, status_options: list[str]):
 
 def _render_metrics(ctx: dict[str, Any], source_df, status_options: list[str]) -> None:
     st = ctx["st"]
+    canonical_status = ctx["canonical_status"]
     counts = source_df["Status Pós-Envio"].value_counts()
-    columns = st.columns(len(status_options))
-    for column, status in zip(columns, status_options):
-        with column:
-            st.metric(status, int(counts.get(status, 0)))
+    total_declarations = len(source_df)
+    transmitted_total = int(source_df["Status Preenchimento"].map(canonical_status).eq("TRANSMITIDO").sum())
+
+    st.markdown(
+        """
+        <style>
+            .post-main-metrics {
+                display: flex;
+                justify-content: center;
+                gap: 1rem;
+                margin: .25rem 0 1rem;
+                flex-wrap: wrap;
+            }
+            .post-main-card {
+                min-width: 220px;
+                padding: 1rem 1.4rem;
+                border: 1px solid #e5e7eb;
+                border-radius: 18px;
+                background: #ffffff;
+                text-align: center;
+                box-shadow: 0 10px 25px rgba(15, 23, 42, .06);
+            }
+            .post-main-label {
+                color: #475569;
+                font-size: .82rem;
+                font-weight: 700;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+            }
+            .post-main-value {
+                color: #0f172a;
+                font-size: 2.25rem;
+                font-weight: 800;
+                line-height: 1.1;
+                margin-top: .35rem;
+            }
+            .post-status-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: .55rem;
+                margin: .25rem 0 .5rem;
+            }
+            .post-status-card {
+                padding: .65rem .75rem;
+                border: 1px solid #e5e7eb;
+                border-radius: 13px;
+                background: #f8fafc;
+                text-align: center;
+            }
+            .post-status-label {
+                color: #475569;
+                font-size: .66rem;
+                font-weight: 800;
+                line-height: 1.2;
+                text-transform: uppercase;
+            }
+            .post-status-value {
+                color: #111827;
+                font-size: 1.25rem;
+                font-weight: 800;
+                line-height: 1.1;
+                margin-top: .25rem;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="post-main-metrics">
+            <div class="post-main-card">
+                <div class="post-main-label">Transmitidas</div>
+                <div class="post-main-value">{transmitted_total}</div>
+            </div>
+            <div class="post-main-card">
+                <div class="post-main-label">Total de declarações na base</div>
+                <div class="post-main-value">{total_declarations}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    status_cards = "".join(
+        f"""
+        <div class="post-status-card">
+            <div class="post-status-label">{status}</div>
+            <div class="post-status-value">{int(counts.get(status, 0))}</div>
+        </div>
+        """
+        for status in status_options
+    )
+    st.markdown(f'<div class="post-status-grid">{status_cards}</div>', unsafe_allow_html=True)
 
 
 def _build_table_export(ctx: dict[str, Any], filtered_df):
