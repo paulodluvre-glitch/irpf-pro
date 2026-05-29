@@ -4,6 +4,14 @@ from typing import Any
 
 
 POST_FILING_NOTE_STEP_KEY = "pos_envio_observacoes"
+DISPLAY_COLUMNS = [
+    "CPF",
+    "NOME",
+    "Status Preenchimento",
+    "Status Pós-Envio",
+    "Cadastro de Procuração",
+]
+EXPORT_COLUMNS = ["client_id", *DISPLAY_COLUMNS]
 
 
 def _with_post_filing_notes(ctx: dict[str, Any], people_df, checkpoints_df):
@@ -75,42 +83,49 @@ def _render_metrics(ctx: dict[str, Any], source_df, status_options: list[str]) -
             st.metric(status, int(counts.get(status, 0)))
 
 
+def _build_table_export(ctx: dict[str, Any], filtered_df):
+    normalize_text = ctx["normalize_text"]
+    available_columns = [column for column in EXPORT_COLUMNS if column in filtered_df.columns]
+    export_df = filtered_df[available_columns].copy()
+    if "client_id" in export_df.columns:
+        export_df = export_df.rename(columns={"client_id": "id"})
+    for column in export_df.columns:
+        export_df[column] = export_df[column].map(normalize_text)
+    return export_df.sort_values(["Status Pós-Envio", "NOME"]) if not export_df.empty else export_df
+
+
 def _render_detail_table(ctx: dict[str, Any], filtered_df) -> None:
     st = ctx["st"]
-    pd = ctx["pd"]
 
-    table_columns = [
-        "NOME",
-        "Grupo",
-        "Status Pós-Envio",
-        "Observação Pós-Envio",
-        "Status Preenchimento",
-        "Responsável pelo Preenchimento",
-        "Documentação",
-        "Recebidos / Total",
-        "Atualização Pós-Envio",
-    ]
-    available_columns = [column for column in table_columns if column in filtered_df.columns]
+    available_columns = [column for column in DISPLAY_COLUMNS if column in filtered_df.columns]
     display_df = filtered_df[available_columns].copy()
-    if "Atualização Pós-Envio" in display_df.columns:
-        display_df["Atualização Pós-Envio"] = pd.to_datetime(
-            display_df["Atualização Pós-Envio"], errors="coerce"
-        ).dt.strftime("%d/%m/%Y %H:%M")
-        display_df["Atualização Pós-Envio"] = display_df["Atualização Pós-Envio"].fillna("")
+    export_df = _build_table_export(ctx, filtered_df)
 
     st.dataframe(
-        display_df.sort_values(["Status Pós-Envio", "Grupo", "NOME"]),
+        display_df.sort_values(["Status Pós-Envio", "NOME"]),
         use_container_width=True,
         hide_index=True,
+    )
+    st.download_button(
+        "Exportar tabela filtrada",
+        data=export_df.to_csv(index=False, sep=";").encode("utf-8-sig"),
+        file_name="pos_envio_filtrado.csv",
+        mime="text/csv",
+        use_container_width=True,
+        disabled=export_df.empty,
     )
 
 
 def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile: dict[str, object]) -> None:
     st = ctx["st"]
     normalize_text = ctx["normalize_text"]
+    normalize_cpf = ctx["normalize_cpf"]
+    canonical_status = ctx["canonical_status"]
     canonical_post_filing_status = ctx["canonical_post_filing_status"]
+    declaration_status_options = ctx["STATUS_OPTIONS"]
     status_options = ctx["POST_FILING_STATUS_OPTIONS"]
     save_post_filing_update = ctx["save_post_filing_update"]
+    can_manage_records = bool(user_profile.get("can_manage_records", False))
 
     st.subheader("Editar cliente")
     if supabase_client is None:
@@ -131,31 +146,76 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
     client_ids = list(client_lookup.keys())
 
     selected_client_id = st.selectbox(
-        "Cliente",
+        "Cliente da tabela filtrada",
         options=client_ids,
         format_func=lambda client_id: (
             f"{normalize_text(client_lookup[client_id]['NOME'])} | {normalize_text(client_lookup[client_id]['Grupo'])}"
         ),
     )
     selected_row = client_lookup[selected_client_id]
-    current_status = canonical_post_filing_status(selected_row.get("Status Pós-Envio", ""))
+    current_declaration_status = canonical_status(selected_row.get("Status Preenchimento", ""))
+    current_post_status = canonical_post_filing_status(selected_row.get("Status Pós-Envio", ""))
     current_observation = normalize_text(selected_row.get("Observação Pós-Envio", ""))
 
+    info_cols = st.columns(5)
+    info_cols[0].caption("CPF")
+    info_cols[0].write(normalize_text(selected_row.get("CPF", "")) or "Não informado")
+    info_cols[1].caption("Nome")
+    info_cols[1].write(normalize_text(selected_row.get("NOME", "")) or "Não informado")
+    info_cols[2].caption("Status preenchimento")
+    info_cols[2].write(current_declaration_status)
+    info_cols[3].caption("Status pós-envio")
+    info_cols[3].write(current_post_status)
+    info_cols[4].caption("Procuração")
+    info_cols[4].write(normalize_text(selected_row.get("Cadastro de Procuração", "")) or "Não informado")
+
+    if not can_manage_records:
+        st.info("Seu usuário pode consultar essa tela, mas não está liberado para salvar alterações cadastrais.")
+
     with st.form(f"post_filing_form_{selected_client_id}"):
-        status = st.selectbox(
-            "Status na Receita Federal",
-            options=status_options,
-            index=status_options.index(current_status) if current_status in status_options else status_options.index("STATUS A VERIFICAR"),
-        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            full_name = st.text_input("NOME", value=normalize_text(selected_row.get("NOME", "")))
+            cpf = st.text_input("CPF", value=normalize_cpf(selected_row.get("CPF", "")))
+            tax_status = st.selectbox(
+                "Status Preenchimento",
+                options=declaration_status_options,
+                index=(
+                    declaration_status_options.index(current_declaration_status)
+                    if current_declaration_status in declaration_status_options
+                    else declaration_status_options.index("SEM STATUS")
+                ),
+            )
+        with col_b:
+            status = st.selectbox(
+                "Status Pós-Envio",
+                options=status_options,
+                index=(
+                    status_options.index(current_post_status)
+                    if current_post_status in status_options
+                    else status_options.index("STATUS A VERIFICAR")
+                ),
+            )
+            power_of_attorney = st.text_input(
+                "Cadastro de Procuração",
+                value=normalize_text(selected_row.get("Cadastro de Procuração", "")),
+            )
         observation = st.text_area(
-            "Observações",
+            "Observações do pós-envio",
             value=current_observation,
             height=120,
             placeholder="Ex.: aguardando processamento no e-CAC, pendência conferida, retorno do cliente...",
         )
-        submitted = st.form_submit_button("Salvar pós-envio", use_container_width=True)
+        submitted = st.form_submit_button(
+            "Salvar alterações",
+            use_container_width=True,
+            disabled=not can_manage_records,
+        )
 
     if submitted:
+        if not normalize_text(full_name):
+            st.error("Informe o nome do cliente antes de salvar.")
+            return
         try:
             save_post_filing_update(
                 supabase_client,
@@ -163,9 +223,13 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
                 status,
                 observation,
                 normalize_text(user_profile.get("display_name", "")) or "Sistema",
+                full_name=full_name,
+                cpf=cpf,
+                tax_status=tax_status,
+                power_of_attorney=power_of_attorney,
             )
             st.toast("Salvo!")
-            st.success("Status de pós-envio atualizado.")
+            st.success("Cadastro e pós-envio atualizados.")
             st.rerun()
         except Exception as exc:
             st.error(f"Não foi possível salvar o pós-envio: {exc}")
@@ -195,4 +259,4 @@ def render_post_filing_page(
     _render_detail_table(ctx, filtered_df)
 
     st.divider()
-    _render_editor(ctx, source_df, supabase_client, user_profile)
+    _render_editor(ctx, filtered_df, supabase_client, user_profile)

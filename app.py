@@ -2210,15 +2210,30 @@ def save_post_filing_update(
     status: str,
     observation: str,
     acting_as: str,
+    full_name: str | None = None,
+    cpf: str | None = None,
+    tax_status: str | None = None,
+    power_of_attorney: str | None = None,
 ) -> None:
     timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
     post_status = canonical_post_filing_status(status)
-    client.table("clients").update(
-        {
-            "post_filing_status": post_status,
-            "updated_at": timestamp,
-        }
-    ).eq("id", client_id).execute()
+    client_payload = {
+        "post_filing_status": post_status,
+        "updated_at": timestamp,
+    }
+    if full_name is not None:
+        client_payload["full_name"] = normalize_text(full_name)
+        client_payload["normalized_name"] = normalize_key(full_name)
+    if tax_status is not None:
+        client_payload["tax_status"] = canonical_status(tax_status)
+    client.table("clients").update(client_payload).eq("id", client_id).execute()
+    private_payload = {"client_id": client_id, "updated_at": timestamp}
+    if cpf is not None:
+        private_payload["cpf"] = normalize_cpf(cpf)
+    if power_of_attorney is not None:
+        private_payload["power_of_attorney"] = normalize_text(power_of_attorney)
+    if len(private_payload) > 2:
+        client.table("client_private").upsert(private_payload, on_conflict="client_id").execute()
     client.table("declaration_checkpoints").upsert(
         {
             "client_id": client_id,
