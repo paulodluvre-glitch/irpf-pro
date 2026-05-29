@@ -10,6 +10,7 @@ DISPLAY_COLUMNS = [
     "Status Preenchimento",
     "Status Pós-Envio",
     "Cadastro de Procuração",
+    "Observação Pós-Envio",
 ]
 EXPORT_COLUMNS = ["client_id", *DISPLAY_COLUMNS]
 
