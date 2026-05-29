@@ -147,6 +147,7 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
     st = ctx["st"]
     normalize_text = ctx["normalize_text"]
     normalize_cpf = ctx["normalize_cpf"]
+    normalize_digits = ctx["normalize_digits"]
     canonical_status = ctx["canonical_status"]
     canonical_post_filing_status = ctx["canonical_post_filing_status"]
     declaration_status_options = ctx["STATUS_OPTIONS"]
@@ -183,10 +184,14 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
     current_declaration_status = canonical_status(selected_row.get("Status Preenchimento", ""))
     current_post_status = canonical_post_filing_status(selected_row.get("Status Pós-Envio", ""))
     current_observation = normalize_text(selected_row.get("Observação Pós-Envio", ""))
+    raw_cpf_digits = normalize_digits(selected_row.get("CPF", ""))
+    cpf_digits = raw_cpf_digits.zfill(11) if raw_cpf_digits else ""
 
     info_cols = st.columns(5)
     info_cols[0].caption("CPF")
     info_cols[0].write(normalize_text(selected_row.get("CPF", "")) or "Não informado")
+    info_cols[0].caption("CPF Receita")
+    info_cols[0].code(cpf_digits or "Não informado", language=None)
     info_cols[1].caption("Nome")
     info_cols[1].write(normalize_text(selected_row.get("NOME", "")) or "Não informado")
     info_cols[2].caption("Status preenchimento")

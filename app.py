@@ -2262,6 +2262,7 @@ def build_sector_context() -> dict[str, object]:
         "PREPARATION_STEPS": PREPARATION_STEPS,
         "normalize_text": normalize_text,
         "normalize_key": normalize_key,
+        "normalize_digits": normalize_digits,
         "normalize_cpf": normalize_cpf,
         "normalize_phone": normalize_phone,
         "canonical_preparer": canonical_preparer,
