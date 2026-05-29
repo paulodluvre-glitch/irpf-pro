@@ -96,11 +96,11 @@ def _render_metrics(ctx: dict[str, Any], source_df, status_options: list[str]) -
     total_declarations = len(source_df)
     transmitted_total = int(source_df["Status Preenchimento"].map(canonical_status).eq("TRANSMITIDO").sum())
 
-    _, transmitted_col, total_col, _ = st.columns([1, 1.25, 1.25, 1])
-    with transmitted_col:
-        st.metric("Transmitidas", transmitted_total)
+    _, total_col, transmitted_col, _ = st.columns([1, 1.25, 1.25, 1])
     with total_col:
         st.metric("Total de declarações na base", total_declarations)
+    with transmitted_col:
+        st.metric("Transmitidas", transmitted_total)
 
     st.caption("Status pós-envio")
     status_columns = st.columns(len(status_options))
