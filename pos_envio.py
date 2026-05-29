@@ -96,95 +96,18 @@ def _render_metrics(ctx: dict[str, Any], source_df, status_options: list[str]) -
     total_declarations = len(source_df)
     transmitted_total = int(source_df["Status Preenchimento"].map(canonical_status).eq("TRANSMITIDO").sum())
 
-    st.markdown(
-        """
-        <style>
-            .post-main-metrics {
-                display: flex;
-                justify-content: center;
-                gap: 1rem;
-                margin: .25rem 0 1rem;
-                flex-wrap: wrap;
-            }
-            .post-main-card {
-                min-width: 220px;
-                padding: 1rem 1.4rem;
-                border: 1px solid #e5e7eb;
-                border-radius: 18px;
-                background: #ffffff;
-                text-align: center;
-                box-shadow: 0 10px 25px rgba(15, 23, 42, .06);
-            }
-            .post-main-label {
-                color: #475569;
-                font-size: .82rem;
-                font-weight: 700;
-                letter-spacing: .04em;
-                text-transform: uppercase;
-            }
-            .post-main-value {
-                color: #0f172a;
-                font-size: 2.25rem;
-                font-weight: 800;
-                line-height: 1.1;
-                margin-top: .35rem;
-            }
-            .post-status-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-                gap: .55rem;
-                margin: .25rem 0 .5rem;
-            }
-            .post-status-card {
-                padding: .65rem .75rem;
-                border: 1px solid #e5e7eb;
-                border-radius: 13px;
-                background: #f8fafc;
-                text-align: center;
-            }
-            .post-status-label {
-                color: #475569;
-                font-size: .66rem;
-                font-weight: 800;
-                line-height: 1.2;
-                text-transform: uppercase;
-            }
-            .post-status-value {
-                color: #111827;
-                font-size: 1.25rem;
-                font-weight: 800;
-                line-height: 1.1;
-                margin-top: .25rem;
-            }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f"""
-        <div class="post-main-metrics">
-            <div class="post-main-card">
-                <div class="post-main-label">Transmitidas</div>
-                <div class="post-main-value">{transmitted_total}</div>
-            </div>
-            <div class="post-main-card">
-                <div class="post-main-label">Total de declarações na base</div>
-                <div class="post-main-value">{total_declarations}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    status_cards = "".join(
-        f"""
-        <div class="post-status-card">
-            <div class="post-status-label">{status}</div>
-            <div class="post-status-value">{int(counts.get(status, 0))}</div>
-        </div>
-        """
-        for status in status_options
-    )
-    st.markdown(f'<div class="post-status-grid">{status_cards}</div>', unsafe_allow_html=True)
+    _, transmitted_col, total_col, _ = st.columns([1, 1.25, 1.25, 1])
+    with transmitted_col:
+        st.metric("Transmitidas", transmitted_total)
+    with total_col:
+        st.metric("Total de declarações na base", total_declarations)
+
+    st.caption("Status pós-envio")
+    status_columns = st.columns(len(status_options))
+    for column, status in zip(status_columns, status_options):
+        with column:
+            st.caption(status)
+            st.markdown(f"### {int(counts.get(status, 0))}")
 
 
 def _build_table_export(ctx: dict[str, Any], filtered_df):
