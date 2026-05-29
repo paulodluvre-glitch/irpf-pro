@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 from comercial import render_commercial_page as render_commercial_sector
 from comercial import render_registry_page as render_registry_sector
+from pos_envio import render_post_filing_page as render_post_filing_sector
 from preenchimento import render_preparation_editor as render_preparation_sector
 from revisao import render_review_page as render_review_sector
 from supabase import Client, create_client
@@ -157,7 +158,14 @@ STATUS_OPTIONS = [
 ]
 
 AVAILABLE_DECLARATION_STATUSES = {"PENDENTE", "SEM STATUS", "PRONTO PARA PREENCHER"}
-SECTOR_OPTIONS = ["Comercial", "Preenchimento", "Revisão", "Cadastros"]
+SECTOR_OPTIONS = ["Comercial", "Preenchimento", "Revisão", "Pós-envio", "Cadastros"]
+POST_FILING_STATUS_OPTIONS = [
+    "STATUS OK",
+    "NÃO TRANSMITIDO DE FATO",
+    "AGUARDANDO PROCESSAMENTO",
+    "CAIU NA MALHA",
+    "STATUS A VERIFICAR",
+]
 PREPARATION_QUEUE_READY_STATUS = "Pronta para Preenchimento"
 PREPARATION_QUEUE_WAITING_STATUS = "Aguardando documentação"
 STATUS_PROGRESS_MAP = {
@@ -433,6 +441,24 @@ def canonical_status(value: object) -> str:
     if "AJUSTE" in normalized:
         return "AJUSTE - HEVERTON"
     return text or "SEM STATUS"
+
+
+def canonical_post_filing_status(value: object) -> str:
+    text = normalize_text(value).upper()
+    normalized = normalize_key(text)
+    if not normalized or normalized in {"NAO INFORMADO", "SEM STATUS"}:
+        return "STATUS A VERIFICAR"
+    if "MALHA" in normalized:
+        return "CAIU NA MALHA"
+    if "PROCESS" in normalized:
+        return "AGUARDANDO PROCESSAMENTO"
+    if "NAO" in normalized and "TRANSMIT" in normalized:
+        return "NÃO TRANSMITIDO DE FATO"
+    if normalized in {"OK", "STATUS OK"} or ("STATUS" in normalized and "OK" in normalized):
+        return "STATUS OK"
+    if "VERIFICAR" in normalized:
+        return "STATUS A VERIFICAR"
+    return text if text in POST_FILING_STATUS_OPTIONS else "STATUS A VERIFICAR"
 
 
 def documentation_status(total: int, received: int) -> str:
@@ -733,7 +759,7 @@ def parse_clients(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     df["Documentação Informada"] = df["Status Preenchimento"].map(documentation_hint)
     df["Status Preenchimento"] = df["Status Preenchimento"].map(canonical_status)
     df["Responsável pelo Preenchimento"] = df["Responsável pelo Preenchimento"].map(canonical_preparer)
-    df["Status Pós-Envio"] = df["Status Pós-Envio"].str.upper().replace("", "Não informado")
+    df["Status Pós-Envio"] = df["Status Pós-Envio"].map(canonical_post_filing_status)
     df["Telefone"] = df["Telefone"].map(normalize_phone)
     df["Senha Gov"] = gov_split.map(lambda item: item[0])
     df["Tem Certificado Digital"] = gov_split.map(lambda item: item[1])
@@ -767,7 +793,10 @@ def default_team_df() -> pd.DataFrame:
 
 def parse_allowed_sectors(value: object) -> list[str]:
     sectors = [normalize_text(item) for item in normalize_text(value).split(",") if normalize_text(item)]
-    return [sector for sector in SECTOR_OPTIONS if sector in sectors]
+    allowed = [sector for sector in SECTOR_OPTIONS if sector in sectors]
+    if "Revisão" in allowed and "Pós-envio" not in allowed:
+        allowed.append("Pós-envio")
+    return [sector for sector in SECTOR_OPTIONS if sector in allowed]
 
 
 def get_user_profile(team_df: pd.DataFrame, user_email: str, source: str) -> dict[str, object]:
@@ -775,7 +804,7 @@ def get_user_profile(team_df: pd.DataFrame, user_email: str, source: str) -> dic
         return {
             "email": "",
             "display_name": "Equipe",
-            "allowed_sectors": ["Comercial", "Preenchimento", "Revisão"],
+            "allowed_sectors": ["Comercial", "Preenchimento", "Revisão", "Pós-envio"],
             "can_manage_records": False,
             "permission_level": "full",
         }
@@ -862,7 +891,7 @@ def load_supabase_bundle(client: Client) -> dict[str, pd.DataFrame]:
                 "Documentação Informada": client_df["tax_status"].map(documentation_hint),
                 "Status Preenchimento": client_df["tax_status"].map(canonical_status),
                 "Responsável pelo Preenchimento": client_df["assigned_preparer"].map(canonical_preparer),
-                "Status Pós-Envio": client_df["post_filing_status"].map(normalize_text).replace("", "Não informado"),
+                "Status Pós-Envio": client_df["post_filing_status"].map(canonical_post_filing_status),
                 "Status para Preenchimento": (
                     client_df["preparation_queue_status"].map(normalize_text)
                     if "preparation_queue_status" in client_df.columns
@@ -1514,7 +1543,7 @@ def render_app_header(user_profile: dict[str, object]) -> None:
 
 
 def render_sector_selector(user_profile: dict[str, object]) -> str:
-    allowed_sectors = user_profile.get("allowed_sectors", []) or ["Comercial", "Preenchimento", "Revisão"]
+    allowed_sectors = user_profile.get("allowed_sectors", []) or ["Comercial", "Preenchimento", "Revisão", "Pós-envio"]
     current_value = st.session_state.get("selected_sector", allowed_sectors[0])
     if current_value not in allowed_sectors:
         current_value = allowed_sectors[0]
@@ -1539,7 +1568,7 @@ def save_client_record(client: Client, client_payload: dict[str, object], privat
         "complexity_level": canonical_complexity(client_payload.get("complexity_level", "")),
         "tax_status": canonical_status(client_payload.get("tax_status", "")),
         "assigned_preparer": canonical_preparer(client_payload.get("assigned_preparer", "")),
-        "post_filing_status": normalize_text(client_payload.get("post_filing_status", "")),
+        "post_filing_status": canonical_post_filing_status(client_payload.get("post_filing_status", "")),
         "documentation_status": normalize_text(client_payload.get("documentation_status", "")) or "Sem documentação",
         "updated_at": timestamp,
     }
@@ -2175,12 +2204,43 @@ def save_preparation_updates(
     invalidate_data_cache()
 
 
+def save_post_filing_update(
+    client: Client,
+    client_id: int,
+    status: str,
+    observation: str,
+    acting_as: str,
+) -> None:
+    timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
+    post_status = canonical_post_filing_status(status)
+    client.table("clients").update(
+        {
+            "post_filing_status": post_status,
+            "updated_at": timestamp,
+        }
+    ).eq("id", client_id).execute()
+    client.table("declaration_checkpoints").upsert(
+        {
+            "client_id": client_id,
+            "step_key": "pos_envio_observacoes",
+            "step_label": "Observações do pós-envio",
+            "completed": bool(normalize_text(observation)),
+            "note": normalize_text(observation),
+            "updated_by": acting_as,
+            "updated_at": timestamp,
+        },
+        on_conflict="client_id,step_key",
+    ).execute()
+    invalidate_data_cache()
+
+
 def build_sector_context() -> dict[str, object]:
     return {
         "st": st,
         "pd": pd,
         "date": date,
         "STATUS_OPTIONS": STATUS_OPTIONS,
+        "POST_FILING_STATUS_OPTIONS": POST_FILING_STATUS_OPTIONS,
         "DOCUMENT_TYPE_OPTIONS": DOCUMENT_TYPE_OPTIONS,
         "DOCUMENT_STATUS_OPTIONS": DOCUMENT_STATUS_OPTIONS,
         "AVAILABLE_DECLARATION_STATUSES": AVAILABLE_DECLARATION_STATUSES,
@@ -2193,6 +2253,7 @@ def build_sector_context() -> dict[str, object]:
         "canonical_complexity": canonical_complexity,
         "canonical_group_label": canonical_group_label,
         "canonical_status": canonical_status,
+        "canonical_post_filing_status": canonical_post_filing_status,
         "canonical_document_status": canonical_document_status,
         "is_unassigned_preparer": is_unassigned_preparer,
         "build_available_preparation_queue": build_available_preparation_queue,
@@ -2207,6 +2268,7 @@ def build_sector_context() -> dict[str, object]:
         "build_document_sections": build_document_sections,
         "save_batch_client_updates": save_batch_client_updates,
         "save_preparation_updates": save_preparation_updates,
+        "save_post_filing_update": save_post_filing_update,
         "load_history_remote": load_history_remote,
         "load_history": load_history,
         "save_snapshot_remote": save_snapshot_remote,
@@ -2242,6 +2304,15 @@ def render_review_page(
     user_profile: dict[str, object],
 ) -> None:
     render_review_sector(build_sector_context(), people_df, snapshot_df, supabase_client, checkpoints_df, documents_df, user_profile)
+
+
+def render_post_filing_page(
+    people_df: pd.DataFrame,
+    supabase_client: Client | None,
+    checkpoints_df: pd.DataFrame,
+    user_profile: dict[str, object],
+) -> None:
+    render_post_filing_sector(build_sector_context(), people_df, supabase_client, checkpoints_df, user_profile)
 
 
 def save_stage_checkpoint_if_missing(client: Client, client_id: int, tax_status: str, acting_as: str, timestamp: str) -> None:
@@ -2546,6 +2617,8 @@ def main() -> None:
         )
     elif selected_sector == "Revisão":
         render_review_page(people_df, snapshot_df, supabase_client, checkpoints_df, documents_df, user_profile)
+    elif selected_sector == "Pós-envio":
+        render_post_filing_page(people_df, supabase_client, checkpoints_df, user_profile)
     else:
         render_import_page(
             supabase_client,
