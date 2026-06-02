@@ -188,19 +188,21 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
     raw_cpf_digits = normalize_digits(selected_row.get("CPF", ""))
     cpf_digits = raw_cpf_digits.zfill(11) if raw_cpf_digits else ""
 
-    info_cols = st.columns(5)
+    info_cols = st.columns([1.1, 1.1, 1.8, 1.25, 1.25, 1.25])
     info_cols[0].caption("CPF")
     info_cols[0].write(normalize_text(selected_row.get("CPF", "")) or "Não informado")
     info_cols[0].caption("CPF Receita")
     info_cols[0].code(cpf_digits or "Não informado", language=None)
-    info_cols[1].caption("Nome")
-    info_cols[1].write(normalize_text(selected_row.get("NOME", "")) or "Não informado")
-    info_cols[2].caption("Status preenchimento")
-    info_cols[2].write(current_declaration_status)
-    info_cols[3].caption("Status pós-envio")
-    info_cols[3].write(current_post_status)
-    info_cols[4].caption("Procuração")
-    info_cols[4].write(normalize_text(selected_row.get("Cadastro de Procuração", "")) or "Não informado")
+    info_cols[1].caption("Senha Gov.br")
+    info_cols[1].code(normalize_text(selected_row.get("Senha Gov", "")) or "Não informado", language=None)
+    info_cols[2].caption("Nome")
+    info_cols[2].write(normalize_text(selected_row.get("NOME", "")) or "Não informado")
+    info_cols[3].caption("Status preenchimento")
+    info_cols[3].write(current_declaration_status)
+    info_cols[4].caption("Status pós-envio")
+    info_cols[4].write(current_post_status)
+    info_cols[5].caption("Procuração")
+    info_cols[5].write(normalize_text(selected_row.get("Cadastro de Procuração", "")) or "Não informado")
 
     if not can_manage_records:
         st.info("Seu usuário pode consultar essa tela, mas não está liberado para salvar alterações cadastrais.")
@@ -210,6 +212,10 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
         with col_a:
             full_name = st.text_input("NOME", value=normalize_text(selected_row.get("NOME", "")))
             cpf = st.text_input("CPF", value=normalize_cpf(selected_row.get("CPF", "")))
+            gov_password = st.text_input(
+                "Senha Gov.br",
+                value=normalize_text(selected_row.get("Senha Gov", "")),
+            )
             tax_status = st.selectbox(
                 "Status Preenchimento",
                 options=declaration_status_options,
@@ -228,10 +234,6 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
                     if current_post_status in status_options
                     else status_options.index("STATUS A VERIFICAR")
                 ),
-            )
-            gov_password = st.text_input(
-                "Senha Gov.br",
-                value=normalize_text(selected_row.get("Senha Gov", "")),
             )
             power_of_attorney = st.text_input(
                 "Cadastro de Procuração",
