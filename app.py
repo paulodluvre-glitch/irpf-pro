@@ -2216,6 +2216,7 @@ def save_post_filing_update(
     full_name: str | None = None,
     cpf: str | None = None,
     tax_status: str | None = None,
+    gov_password: str | None = None,
     power_of_attorney: str | None = None,
 ) -> None:
     timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
@@ -2233,6 +2234,8 @@ def save_post_filing_update(
     private_payload = {"client_id": client_id, "updated_at": timestamp}
     if cpf is not None:
         private_payload["cpf"] = normalize_cpf(cpf)
+    if gov_password is not None:
+        private_payload["gov_password"] = normalize_text(gov_password)
     if power_of_attorney is not None:
         private_payload["power_of_attorney"] = normalize_text(power_of_attorney)
     if len(private_payload) > 2:

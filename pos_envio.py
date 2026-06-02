@@ -229,6 +229,10 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
                     else status_options.index("STATUS A VERIFICAR")
                 ),
             )
+            gov_password = st.text_input(
+                "Senha Gov.br",
+                value=normalize_text(selected_row.get("Senha Gov", "")),
+            )
             power_of_attorney = st.text_input(
                 "Cadastro de Procuração",
                 value=normalize_text(selected_row.get("Cadastro de Procuração", "")),
@@ -259,6 +263,7 @@ def _render_editor(ctx: dict[str, Any], source_df, supabase_client, user_profile
                 full_name=full_name,
                 cpf=cpf,
                 tax_status=tax_status,
+                gov_password=gov_password,
                 power_of_attorney=power_of_attorney,
             )
             st.toast("Salvo!")
